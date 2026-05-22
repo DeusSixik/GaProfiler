@@ -31,7 +31,7 @@ repositories {
 Add the dependency:
 ```gradle
 dependencies {
-    implementation 'com.github.DeusSixik/GaProfiler:1.0.0'
+    implementation 'com.github.DeusSixik:GaProfiler:1.0.0'
 }
 ```
 
