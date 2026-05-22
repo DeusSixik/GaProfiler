@@ -7,7 +7,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class HtmlReporter {
-    public static void generate(String filePath, Collection<ProfileData> data) {
+    public static void generate(String filePath, Collection<ProfileData.Snapshot> data) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         html.append("    <meta charset=\"UTF-8\">\n");
@@ -69,7 +69,7 @@ public class HtmlReporter {
         html.append("                <tbody id=\"table-body\">\n");
 
         int idx = 0;
-        for (ProfileData d : data) {
+        for (ProfileData.Snapshot d : data) {
             double minMs = d.getMin() / 1_000_000.0;
             double avgMs = d.getAvg() / 1_000_000.0;
             double maxMs = d.getMax() / 1_000_000.0;
@@ -187,7 +187,7 @@ public class HtmlReporter {
         }
     }
 
-    public static void generateComparison(String filePath, Map<String, Collection<ProfileData>> datasets) {
+    public static void generateComparison(String filePath, Map<String, Collection<ProfileData.Snapshot>> datasets) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         html.append("    <meta charset=\"UTF-8\">\n");
@@ -254,8 +254,8 @@ public class HtmlReporter {
 
         Set<String> allSections = new TreeSet<>();
         Map<String, String> tooltips = new HashMap<>();
-        for (Collection<ProfileData> runData : datasets.values()) {
-            for (ProfileData d : runData) {
+        for (Collection<ProfileData.Snapshot> runData : datasets.values()) {
+            for (ProfileData.Snapshot d : runData) {
                 allSections.add(d.getName());
                 if (d.getTooltip() != null) tooltips.put(d.getName(), d.getTooltip());
             }
@@ -264,8 +264,8 @@ public class HtmlReporter {
         for (String section : allSections) {
             int runsCount = 0;
             double bestAvg = Double.MAX_VALUE;
-            for (Collection<ProfileData> runData : datasets.values()) {
-                for (ProfileData d : runData) {
+            for (Collection<ProfileData.Snapshot> runData : datasets.values()) {
+                for (ProfileData.Snapshot d : runData) {
                     if (d.getName().equals(section)) {
                         runsCount++;
                         double avg = d.getAvg() / 1_000_000.0;
@@ -295,9 +295,9 @@ public class HtmlReporter {
         html.append("        const comparisonData = {\n");
         for (String section : allSections) {
             html.append("            '").append(section).append("': [\n");
-            for (Map.Entry<String, Collection<ProfileData>> entry : datasets.entrySet()) {
+            for (Map.Entry<String, Collection<ProfileData.Snapshot>> entry : datasets.entrySet()) {
                 String runLabel = entry.getKey();
-                ProfileData d = entry.getValue().stream()
+                ProfileData.Snapshot d = entry.getValue().stream()
                     .filter(p -> p.getName().equals(section))
                     .findFirst()
                     .orElse(null);
