@@ -24,7 +24,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.DeusSixik:GaProfiler:1.0.0'
+    implementation 'com.github.DeusSixik:GaProfiler:2.0.0'
 }
 ```
 
