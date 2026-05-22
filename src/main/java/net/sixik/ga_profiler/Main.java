@@ -1,9 +1,6 @@
 package net.sixik.ga_profiler;
 
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 
 public class Main {
     public static void main(String[] args) throws InterruptedException {
@@ -23,9 +20,16 @@ public class Main {
 
         // --- ГЕНЕРАЦИЯ ОТЧЕТОВ ---
         System.out.println("Generating reports...");
+
+        List<String> specs = Arrays.asList(
+                "Ryzen Threadripper 1950x",
+                "RTX 5070",
+                "RAM 64 gb: Gived 10 gb",
+                "SSD M2"
+        );
         
         // Одиночный отчет для версии 1.1
-        HtmlReporter.generate("performance_report.html", Profiler.load("v1_1.dump"));
+        HtmlReporter.generate("performance_report.html", Profiler.load("v1_1.dump"), specs);
         
         // Сравнительный отчет
         Map<String, Collection<ProfileData.Snapshot>> comparisonMap = new LinkedHashMap<>();
@@ -35,7 +39,7 @@ public class Main {
         // Можно добавить еще одну "загруженную" версию для теста
         comparisonMap.put("Competitor Engine", generateFakeData(random));
 
-        HtmlReporter.generateComparison("comparison_report.html", comparisonMap);
+        HtmlReporter.generateComparison("comparison_report.html", comparisonMap, specs);
         System.out.println("Comparison report generated: comparison_report.html");
     }
 

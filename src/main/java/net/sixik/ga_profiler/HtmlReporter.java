@@ -7,7 +7,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class HtmlReporter {
-    public static void generate(String filePath, Collection<ProfileData.Snapshot> data) {
+    public static void generate(String filePath, Collection<ProfileData.Snapshot> data, List<String> specs) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         html.append("    <meta charset=\"UTF-8\">\n");
@@ -29,6 +29,11 @@ public class HtmlReporter {
         html.append("        tr:hover td { background: #1e293b; color: #38bdf8; }\n");
         html.append("        tr.selected td { background: #0ea5e922 !important; color: #38bdf8; border-bottom-color: #0ea5e9; }\n");
         html.append("        .val { font-family: 'JetBrains Mono', monospace; font-size: 13px; }\n");
+        html.append("        .specs-list { list-style: none; padding: 0; margin: 0; text-align: right; font-size: 12px; color: #f8fafc; }\n");
+        html.append("        .spec-item { margin-bottom: 2px; border-bottom: 1px solid #1e293b; padding-bottom: 2px; }\n");
+        html.append("        .spec-item:last-child { border-bottom: none; }\n");
+        html.append("        .header-left { display: flex; flex-direction: column; gap: 4px; }\n");
+        html.append("        .header-right { display: flex; align-items: center; gap: 20px; }\n");
         html.append("        .hint { color: #64748b; font-size: 14px; text-align: center; margin-top: 10px; }\n");
         html.append("        #current-section-name { color: #38bdf8; font-weight: 600; font-size: 18px; }\n");
         html.append("        .apexcharts-menu {\n");
@@ -46,8 +51,17 @@ public class HtmlReporter {
         html.append("</head>\n<body>\n");
         html.append("    <div class=\"container\">\n");
         html.append("        <div class=\"header\">\n");
-        html.append("            <h1>GaProfiler</h1>\n");
-        html.append("            <div id=\"current-section-name\">Select a section</div>\n");
+        html.append("            <div class=\"header-left\">\n");
+        html.append("                <h1>GaProfiler</h1>\n");
+        html.append("                <div id=\"current-section-name\">Select a section</div>\n");
+        html.append("            </div>\n");
+        html.append("            <div class=\"header-right\">\n");
+        html.append("                <ul class=\"specs-list\">\n");
+        for (String spec : specs) {
+            html.append("                    <li class=\"spec-item\">").append(spec).append("</li>\n");
+        }
+        html.append("                </ul>\n");
+        html.append("            </div>\n");
         html.append("        </div>\n");
         html.append("        \n");
         html.append("        <div class=\"card\">\n");
@@ -102,6 +116,12 @@ public class HtmlReporter {
         
         html.append("    <script>\n");
         html.append("        let chart = null;\n");
+        html.append("        const chartSpecs = [");
+        for (int i = 0; i < specs.size(); i++) {
+            html.append("'").append(specs.get(i).replace("'", "\\'")).append("'");
+            if (i < specs.size() - 1) html.append(", ");
+        }
+        html.append("];\n");
         html.append("        \n");
         html.append("        function updateChart(name, min, avg, max, tooltip, rowElement) {\n");
         html.append("            document.getElementById('current-section-name').innerText = name;\n");
@@ -113,6 +133,12 @@ public class HtmlReporter {
         html.append("            const options = {\n");
         html.append("                title: { text: name, align: 'left', style: { color: '#38bdf8', fontSize: '20px' }, offsetY: 0 },\n");
         html.append("                subtitle: { text: tooltip || '', align: 'left', style: { color: '#94a3b8', fontSize: '14px' }, offsetY: 25 },\n");
+        html.append("                annotations: {\n");
+        html.append("                    texts: [{\n");
+        html.append("                        x: '98%', y: 15, text: chartSpecs, textAnchor: 'end',\n");
+        html.append("                        style: { fontSize: '11px', fontFamily: 'Inter', color: '#f8fafc' }\n");
+        html.append("                    }]\n");
+        html.append("                },\n");
         html.append("                series: [{\n");
         html.append("                    name: 'Duration',\n");
         html.append("                    data: [\n");
@@ -187,7 +213,7 @@ public class HtmlReporter {
         }
     }
 
-    public static void generateComparison(String filePath, Map<String, Collection<ProfileData.Snapshot>> datasets) {
+    public static void generateComparison(String filePath, Map<String, Collection<ProfileData.Snapshot>> datasets, List<String> specs) {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         html.append("    <meta charset=\"UTF-8\">\n");
@@ -212,6 +238,11 @@ public class HtmlReporter {
         html.append("        tr:hover td { background: #1e293b; color: #38bdf8; }\n");
         html.append("        tr.selected td { background: #0ea5e922 !important; color: #38bdf8; border-bottom-color: #0ea5e9; }\n");
         html.append("        .val { font-family: 'JetBrains Mono', monospace; font-size: 13px; }\n");
+        html.append("        .specs-list { list-style: none; padding: 0; margin: 0; text-align: right; font-size: 12px; color: #f8fafc; }\n");
+        html.append("        .spec-item { margin-bottom: 2px; border-bottom: 1px solid #1e293b; padding-bottom: 2px; }\n");
+        html.append("        .spec-item:last-child { border-bottom: none; }\n");
+        html.append("        .header-left { display: flex; flex-direction: column; gap: 4px; }\n");
+        html.append("        .header-right { display: flex; align-items: center; gap: 20px; }\n");
         html.append("        #current-section-name { color: #38bdf8; font-weight: 600; font-size: 18px; }\n");
         html.append("        .apexcharts-menu {\n");
         html.append("            background: #1e293b !important;\n");
@@ -228,8 +259,17 @@ public class HtmlReporter {
         html.append("</head>\n<body>\n");
         html.append("    <div class=\"container\">\n");
         html.append("        <div class=\"header\">\n");
-        html.append("            <h1>GaProfiler Comparison</h1>\n");
-        html.append("            <div id=\"current-section-name\">Select a section</div>\n");
+        html.append("            <div class=\"header-left\">\n");
+        html.append("                <h1>GaProfiler Comparison</h1>\n");
+        html.append("                <div id=\"current-section-name\">Select a section</div>\n");
+        html.append("            </div>\n");
+        html.append("            <div class=\"header-right\">\n");
+        html.append("                <ul class=\"specs-list\">\n");
+        for (String spec : specs) {
+            html.append("                    <li class=\"spec-item\">").append(spec).append("</li>\n");
+        }
+        html.append("                </ul>\n");
+        html.append("            </div>\n");
         html.append("        </div>\n");
         html.append("        \n");
         html.append("        <div class=\"card\">\n");
@@ -323,6 +363,12 @@ public class HtmlReporter {
         html.append("        };\n");
 
         html.append("        let chart = null;\n");
+        html.append("        const chartSpecs = [");
+        for (int i = 0; i < specs.size(); i++) {
+            html.append("'").append(specs.get(i).replace("'", "\\'")).append("'");
+            if (i < specs.size() - 1) html.append(", ");
+        }
+        html.append("];\n");
         html.append("        let currentSection = null;\n");
         html.append("        let currentSort = 'none';\n\n");
         
@@ -351,6 +397,12 @@ public class HtmlReporter {
         html.append("            const options = {\n");
         html.append("                title: { text: currentSection, align: 'left', style: { color: '#38bdf8', fontSize: '20px' }, offsetY: 0 },\n");
         html.append("                subtitle: { text: tooltip || '', align: 'left', style: { color: '#94a3b8', fontSize: '14px' }, offsetY: 25 },\n");
+        html.append("                annotations: {\n");
+        html.append("                    texts: [{\n");
+        html.append("                        x: '98%', y: 15, text: chartSpecs, textAnchor: 'end',\n");
+        html.append("                        style: { fontSize: '11px', fontFamily: 'Inter', color: '#f8fafc' }\n");
+        html.append("                    }]\n");
+        html.append("                },\n");
         html.append("                series: [\n");
         html.append("                    { name: 'Min', data: data.map(d => parseFloat(d.min.toFixed(4))) },\n");
         html.append("                    { name: 'Avg', data: data.map(d => parseFloat(d.avg.toFixed(4))) },\n");
@@ -392,6 +444,7 @@ public class HtmlReporter {
         html.append("                },\n");
         html.append("                tooltip: { theme: 'dark' },\n");
         html.append("                grid: { borderColor: '#334155', padding: { top: 40 } },\n");
+        html.append("                theme: { mode: 'dark' },\n");
         html.append("                legend: { position: 'top', horizontalAlign: 'center', offsetY: 0, labels: { colors: '#f8fafc' } }\n");
         html.append("            };\n\n");
 
