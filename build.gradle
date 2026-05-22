@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'net.sixik.ga_profiler'
-version = '1.0-SNAPSHOT'
+version = '1.0.0'
 
 application {
     mainClass = 'net.sixik.ga_profiler.Main'

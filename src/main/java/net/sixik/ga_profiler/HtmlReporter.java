@@ -277,6 +277,9 @@ public class HtmlReporter {
         html.append("                <span>Sort by:</span>\n");
         html.append("                <button id=\"sort-none\" class=\"active\" onclick=\"setSort('none')\">Original</button>\n");
         html.append("                <button id=\"sort-avg\" onclick=\"setSort('avg')\">Best Avg</button>\n");
+        html.append("                <span style=\"margin-left: 20px;\">View Mode:</span>\n");
+        html.append("                <button id=\"view-groups\" class=\"active\" onclick=\"setViewMode('groups')\">By Groups</button>\n");
+        html.append("                <button id=\"view-metrics\" onclick=\"setViewMode('metrics')\">By Metrics</button>\n");
         html.append("            </div>\n");
         html.append("            <div id=\"chart\"></div>\n");
         html.append("        </div>\n");
@@ -370,12 +373,27 @@ public class HtmlReporter {
         }
         html.append("];\n");
         html.append("        let currentSection = null;\n");
-        html.append("        let currentSort = 'none';\n\n");
-        
+        html.append("        let currentSort = 'none';\n");
+        html.append("        let currentViewMode = 'groups';\n\n");
+        html.append("        function generateDistinctColors(count) {\n");
+        html.append("            const colors = [];\n");
+        html.append("            for (let i = 0; i < count; i++) {\n");
+        html.append("                const hue = (i * 137.508) % 360;\n");
+        html.append("                colors.push(`hsl(${hue}, 75%, 60%)`);\n");
+        html.append("            }\n");
+        html.append("            return colors;\n");
+        html.append("        }\n\n");
         html.append("        function setSort(mode) {\n");
         html.append("            currentSort = mode;\n");
-        html.append("            document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));\n");
+        html.append("            document.querySelectorAll('.controls button[id^=\"sort-\"]').forEach(b => b.classList.remove('active'));\n");
         html.append("            document.getElementById('sort-' + mode).classList.add('active');\n");
+        html.append("            if (currentSection) updateChart();\n");
+        html.append("        }\n\n");
+
+        html.append("        function setViewMode(mode) {\n");
+        html.append("            currentViewMode = mode;\n");
+        html.append("            document.querySelectorAll('.controls button[id^=\"view-\"]').forEach(b => b.classList.remove('active'));\n");
+        html.append("            document.getElementById('view-' + mode).classList.add('active');\n");
         html.append("            if (currentSection) updateChart();\n");
         html.append("        }\n\n");
 
@@ -394,6 +412,28 @@ public class HtmlReporter {
         html.append("                data.sort((a, b) => a.avg - b.avg);\n");
         html.append("            }\n\n");
         
+        html.append("            let series, categories, colors;\n");
+        html.append("            if (currentViewMode === 'groups') {\n");
+        html.append("                series = [\n");
+        html.append("                    { name: 'Min', data: data.map(d => parseFloat(d.min.toFixed(4))) },\n");
+        html.append("                    { name: 'Avg', data: data.map(d => parseFloat(d.avg.toFixed(4))) },\n");
+        html.append("                    { name: 'Max', data: data.map(d => parseFloat(d.max.toFixed(4))) }\n");
+        html.append("                ];\n");
+        html.append("                categories = data.map(d => d.label);\n");
+        html.append("                colors = ['#10b981', '#f59e0b', '#ef4444'];\n");
+        html.append("            } else {\n");
+        html.append("                categories = ['Min', 'Avg', 'Max'];\n");
+        html.append("                series = data.map(d => ({\n");
+        html.append("                    name: d.label,\n");
+        html.append("                    data: [\n");
+        html.append("                        parseFloat(d.min.toFixed(4)),\n");
+        html.append("                        parseFloat(d.avg.toFixed(4)),\n");
+        html.append("                        parseFloat(d.max.toFixed(4))\n");
+        html.append("                    ]\n");
+        html.append("                }));\n");
+        html.append("                colors = generateDistinctColors(series.length);\n");
+        html.append("            }\n\n");
+
         html.append("            const options = {\n");
         html.append("                title: { text: currentSection, align: 'left', style: { color: '#38bdf8', fontSize: '20px' }, offsetY: 0 },\n");
         html.append("                subtitle: { text: tooltip || '', align: 'left', style: { color: '#94a3b8', fontSize: '14px' }, offsetY: 25 },\n");
@@ -403,11 +443,7 @@ public class HtmlReporter {
         html.append("                        style: { fontSize: '11px', fontFamily: 'Inter', color: '#f8fafc' }\n");
         html.append("                    }]\n");
         html.append("                },\n");
-        html.append("                series: [\n");
-        html.append("                    { name: 'Min', data: data.map(d => parseFloat(d.min.toFixed(4))) },\n");
-        html.append("                    { name: 'Avg', data: data.map(d => parseFloat(d.avg.toFixed(4))) },\n");
-        html.append("                    { name: 'Max', data: data.map(d => parseFloat(d.max.toFixed(4))) }\n");
-        html.append("                ],\n");
+        html.append("                series: series,\n");
         html.append("                chart: {\n");
         html.append("                    type: 'bar',\n");
         html.append("                    height: 400,\n");
@@ -418,7 +454,7 @@ public class HtmlReporter {
         html.append("                        tools: { download: true, selection: false, zoom: false, zoomin: false, zoomout: false, pan: false, reset: false }\n");
         html.append("                    }\n");
         html.append("                },\n");
-        html.append("                colors: ['#10b981', '#f59e0b', '#ef4444'],\n");
+        html.append("                colors: colors,\n");
         html.append("                plotOptions: {\n");
         html.append("                    bar: {\n");
         html.append("                        horizontal: false,\n");
@@ -435,7 +471,7 @@ public class HtmlReporter {
         html.append("                },\n");
         html.append("                xaxis: {\n");
         html.append("                    title: { text: 'GA Profiler', style: { color: '#475569', fontSize: '10px' } },\n");
-        html.append("                    categories: data.map(d => d.label),\n");
+        html.append("                    categories: categories,\n");
         html.append("                    labels: { style: { colors: '#94a3b8' } }\n");
         html.append("                },\n");
         html.append("                yaxis: {\n");
