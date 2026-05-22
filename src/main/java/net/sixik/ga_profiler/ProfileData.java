@@ -11,16 +11,24 @@ public final class ProfileData {
     }
 
     public static final class MetricStats {
-        private static final MetricStats EMPTY = new MetricStats(0L, 0L, 0L, 0L);
+        private static final MetricStats EMPTY = new MetricStats(0L, 0L, 0L, 0L, 0L, 0L);
 
         private final long min;
+        private final long median;
         private final long max;
+        private final long p95;
         private final long total;
         private final long count;
 
         public MetricStats(long min, long max, long total, long count) {
+            this(min, Math.round(count == 0L ? 0.0 : (double) total / count), max, max, total, count);
+        }
+
+        public MetricStats(long min, long median, long max, long p95, long total, long count) {
             this.min = min;
+            this.median = median;
             this.max = max;
+            this.p95 = p95;
             this.total = total;
             this.count = count;
         }
@@ -33,8 +41,16 @@ public final class ProfileData {
             return min;
         }
 
+        public long getMedian() {
+            return median;
+        }
+
         public long getMax() {
             return max;
+        }
+
+        public long getP95() {
+            return p95;
         }
 
         public long getTotal() {

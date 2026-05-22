@@ -69,7 +69,12 @@ public class Main {
     ) throws InterruptedException {
         for (int i = 0; i < 50; i++) {
             try (Profiler.ProfileScope scene = Profiler.scope(renderScene)) {
+
                 Thread.sleep((long) (random.nextInt(10, 20) * multiplier));
+                Pos[] newArray = new Pos[(int) (512 * (multiplier * 500))];
+                for (int i1 = 0; i1 < newArray.length; i1++) {
+                    newArray[i1] = new Pos(random.nextInt(), random.nextInt(), random.nextInt());
+                }
             }
 
             try (Profiler.ProfileScope physics = Profiler.scope(physicsUpdate)) {
@@ -98,4 +103,6 @@ public class Main {
         }
         return Profiler.getData();
     }
+
+    public record Pos(int x, int y, int z) {};
 }

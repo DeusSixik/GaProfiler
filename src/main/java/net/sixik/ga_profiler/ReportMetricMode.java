@@ -3,7 +3,7 @@ package net.sixik.ga_profiler;
 import java.util.List;
 
 public enum ReportMetricMode {
-    CODE_EXECUTION_TIME("executionTime", "Code Execution Time", List.of("Calls", "Min", "Avg", "Max", "Total")) {
+    CODE_EXECUTION_TIME("executionTime", "Code Execution Time", List.of("Calls", "Min", "Median", "Avg", "P95", "Max", "Total")) {
         @Override
         public ProfileData.MetricStats stats(ProfileData.Snapshot snapshot) {
             return snapshot.getExecutionTime();
@@ -34,7 +34,7 @@ public enum ReportMetricMode {
             return String.format(java.util.Locale.US, "%.4f %s", value, Profiler.getDisplayUnit().label());
         }
     },
-    CODE_MEMORY_ALLOCATION("memoryAllocation", "Code Memory Allocation", List.of("Calls", "Min Alloc", "Avg Alloc", "Max Alloc", "Total Alloc")) {
+    CODE_MEMORY_ALLOCATION("memoryAllocation", "Code Memory Allocation", List.of("Calls", "Min Alloc", "Median Alloc", "Avg Alloc", "P95 Alloc", "Max Alloc", "Total Alloc")) {
         @Override
         public ProfileData.MetricStats stats(ProfileData.Snapshot snapshot) {
             return snapshot.getMemoryAllocation();

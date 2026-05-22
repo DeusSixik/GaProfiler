@@ -17,6 +17,7 @@ public class HtmlReporter {
         appendDocumentStart(html, "GaProfiler Performance Dashboard");
         appendHeader(html, "GaProfiler", specs);
         appendModeControls(html);
+        appendVisibleMetricControls(html);
         html.append("        <div class=\"card\"><div id=\"chart\"></div></div>\n");
         html.append("        <div class=\"card\" style=\"padding: 0; overflow: hidden;\">\n");
         html.append("            <table>\n");
@@ -33,6 +34,7 @@ public class HtmlReporter {
         appendSharedScriptHelpers(html);
         html.append("        let currentMode = '" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "';\n");
         html.append("        let selectedSection = null;\n");
+        html.append("        let visibleChartMetrics = { min: true, median: true, avg: true, p95: true, max: true };\n");
         html.append("        let chart = null;\n");
         html.append("        function renderTable() {\n");
         html.append("            const mode = reportModes[currentMode];\n");
@@ -51,11 +53,13 @@ public class HtmlReporter {
         html.append("            if (metric.supported) {\n");
         html.append("                cells += '<td>' + metric.count + '</td>';\n");
         html.append("                cells += '<td class=\"val\">' + formatMetricValue(metric.min, currentMode) + '</td>';\n");
+        html.append("                cells += '<td class=\"val\">' + formatMetricValue(metric.median, currentMode) + '</td>';\n");
         html.append("                cells += '<td class=\"val\" style=\"color: #f59e0b;\">' + formatMetricValue(metric.avg, currentMode) + '</td>';\n");
+        html.append("                cells += '<td class=\"val\" style=\"color: #f87171;\">' + formatMetricValue(metric.p95, currentMode) + '</td>';\n");
         html.append("                cells += '<td class=\"val\">' + formatMetricValue(metric.max, currentMode) + '</td>';\n");
         html.append("                cells += '<td class=\"val\">' + formatMetricValue(metric.total, currentMode) + '</td>';\n");
         html.append("            } else {\n");
-        html.append("                cells += '<td class=\"val\">' + metric.unavailable + '</td>'.repeat(5);\n");
+        html.append("                cells += '<td class=\"val\">' + metric.unavailable + '</td>'.repeat(mode.columns.length);\n");
         html.append("            }\n");
         html.append("            return '<tr id=\"row-' + index + '\" onclick=\"selectSectionByIndex(' + index + ')\">' + cells + '</tr>';\n");
         html.append("        }\n");
@@ -68,17 +72,18 @@ public class HtmlReporter {
         html.append("        function renderSingleChart() {\n");
         html.append("            const section = sections.find(item => item.name === selectedSection);\n");
         html.append("            if (!section) { return; }\n");
-        html.append("            document.getElementById('current-section-name').innerText = section.name;\n");
+        html.append("            document.getElementById('current-section-name').innerText = buildSectionDisplayName(section.name);\n");
         html.append("            const mode = reportModes[currentMode];\n");
         html.append("            const metric = section[currentMode];\n");
-        html.append("            const options = buildBaseChartOptions(mode, section.tooltip || '');\n");
-        html.append("            options.title.text = section.name;\n");
+        html.append("            const options = buildBaseChartOptions(mode, buildSectionSubtitle(section.tooltip || ''));\n");
+        html.append("            options.title.text = buildSectionChartTitle(section.name);\n");
         html.append("            if (metric.supported) {\n");
-        html.append("                options.series = [{ name: mode.label, data: [metric.min, metric.avg, metric.max] }];\n");
-        html.append("                options.xaxis.categories = ['Min', 'Avg', 'Max'];\n");
+        html.append("                options.series = [{ name: mode.label, data: buildChartSeriesData(metric) }];\n");
+        html.append("                options.xaxis.categories = getVisibleMetricCategories();\n");
         html.append("                options.yaxis = { title: { text: mode.axisLabel, style: { color: '#94a3b8', fontWeight: 500 } }, labels: { style: { colors: '#94a3b8' }, formatter: (v) => formatMetricValue(v, currentMode) } };\n");
-        html.append("                options.dataLabels = { enabled: true, formatter: (val) => formatMetricValue(val, currentMode), offsetY: -28, style: { fontSize: '11px', colors: ['#f8fafc'], fontFamily: 'JetBrains Mono' } };\n");
+        html.append("                options.dataLabels = { enabled: true, formatter: (val, opts) => shouldRenderInsideChartDataLabel(val, opts) ? formatChartBarValue(val, currentMode) : '', offsetY: 6, style: { fontSize: '9px', colors: ['#f8fafc'], fontFamily: 'JetBrains Mono', fontWeight: 600 } };\n");
         html.append("                options.tooltip = { theme: 'dark', y: { formatter: (v) => formatMetricValue(v, currentMode) } };\n");
+        html.append("                if (options.series[0].data.length === 0) { options.series = []; options.noData = { text: 'Enable at least one metric', align: 'center', verticalAlign: 'middle', style: { color: '#f8fafc' } }; }\n");
         html.append("            } else {\n");
         html.append("                options.series = [];\n");
         html.append("                options.noData = { text: metric.unavailable, align: 'center', verticalAlign: 'middle', style: { color: '#f8fafc' } };\n");
@@ -92,7 +97,19 @@ public class HtmlReporter {
         html.append("            renderTable();\n");
         html.append("            renderSingleChart();\n");
         html.append("        }\n");
-        html.append("        window.onload = () => { setMode('" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "'); };\n");
+        html.append("        function toggleMetricVisibility(metricKey) {\n");
+        html.append("            visibleChartMetrics[metricKey] = !visibleChartMetrics[metricKey];\n");
+        html.append("            updateMetricVisibilityButtons();\n");
+        html.append("            renderSingleChart();\n");
+        html.append("        }\n");
+        html.append("        function updateMetricVisibilityButtons() {\n");
+        html.append("            chartMetricDefinitions.forEach(metric => {\n");
+        html.append("                const button = document.getElementById('visible-metric-' + metric.key);\n");
+        html.append("                if (!button) { return; }\n");
+        html.append("                button.classList.toggle('active', !!visibleChartMetrics[metric.key]);\n");
+        html.append("            });\n");
+        html.append("        }\n");
+        html.append("        window.onload = () => { updateMetricVisibilityButtons(); setMode('" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "'); };\n");
         html.append("    </script>\n");
         html.append("</body>\n</html>");
         writeHtml(filePath, html.toString(), "HTML report");
@@ -103,7 +120,8 @@ public class HtmlReporter {
         appendDocumentStart(html, "GaProfiler Comparison Dashboard");
         appendHeader(html, "GaProfiler Comparison", specs);
         appendModeControls(html);
-        appendComparisonSortControls(html);
+        appendComparisonSortControls(html, datasets.keySet());
+        appendVisibleMetricControls(html);
         html.append("        <div class=\"card\"><div id=\"chart\"></div></div>\n");
         html.append("        <div class=\"card\" style=\"padding: 0; overflow: hidden;\">\n");
         html.append("            <table>\n");
@@ -122,11 +140,13 @@ public class HtmlReporter {
         html.append("        let selectedSection = null;\n");
         html.append("        let currentGroupSort = 'none';\n");
         html.append("        let currentSortDirection = 'asc';\n");
+        html.append("        let baselineRunLabel = '';\n");
+        html.append("        let visibleChartMetrics = { min: true, median: true, avg: true, p95: true, max: true };\n");
         html.append("        let chart = null;\n");
         html.append("        function renderTable() {\n");
         html.append("            const mode = reportModes[currentMode];\n");
-            html.append("            const head = document.getElementById('table-head');\n");
-        html.append("            head.innerHTML = '<tr><th>Section Name</th><th>Available in Runs</th><th>Best Avg</th></tr>';\n");
+        html.append("            const head = document.getElementById('table-head');\n");
+        html.append("            head.innerHTML = '<tr><th>Section Name</th><th>Available in Runs</th><th>' + escapeHtml(getComparisonMetricHeader()) + '</th>' + renderBaselineHeaderCell() + '</tr>';\n");
         html.append("            const body = document.getElementById('table-body');\n");
         html.append("            body.innerHTML = comparisonSections.map((section, index) => renderComparisonRow(section, index)).join('');\n");
         html.append("            if (!selectedSection && comparisonSections.length > 0) { selectedSection = comparisonSections[0].name; }\n");
@@ -135,14 +155,15 @@ public class HtmlReporter {
         html.append("        }\n");
         html.append("        function renderComparisonRow(section, index) {\n");
         html.append("            const supportedRuns = section.runs.filter(run => run[currentMode].supported);\n");
-        html.append("            const metricKey = currentGroupSort === 'none' ? 'avg' : currentGroupSort;\n");
-        html.append("            const bestAvg = supportedRuns.length > 0 ? Math.min(...supportedRuns.map(run => run[currentMode][metricKey])) : null;\n");
+        html.append("            const metricKey = getComparisonMetricKey();\n");
+        html.append("            const bestValue = supportedRuns.length > 0 ? Math.min(...supportedRuns.map(run => run[currentMode][metricKey])) : null;\n");
         html.append("            const tooltipAttr = section.tooltip ? ' data-tippy-content=\"' + escapeHtml(section.tooltip) + '\" style=\"font-weight: 600; color: #10b981; border-bottom: 1px dashed #334155;\"' : ' style=\"font-weight: 600; color: #10b981;\"';\n");
-        html.append("            const bestAvgText = bestAvg === null ? unavailableFromRuns(section.runs) : formatMetricValue(bestAvg, currentMode);\n");
+        html.append("            const bestValueText = bestValue === null ? unavailableFromRuns(section.runs) : formatMetricValue(bestValue, currentMode);\n");
         html.append("            return '<tr id=\"row-' + index + '\" onclick=\"selectComparisonSectionByIndex(' + index + ')\">' +\n");
         html.append("                '<td' + tooltipAttr + '>' + escapeHtml(section.name) + '</td>' +\n");
         html.append("                '<td>' + supportedRuns.length + ' / ' + section.runs.length + '</td>' +\n");
-        html.append("                '<td class=\"val\">' + bestAvgText + '</td>' +\n");
+        html.append("                '<td class=\"val\">' + bestValueText + '</td>' +\n");
+        html.append("                renderBaselineValueCell(section.runs, bestValue, metricKey) +\n");
         html.append("                '</tr>';\n");
         html.append("        }\n");
         html.append("        function selectComparisonSectionByIndex(index) { const section = comparisonSections[index]; if (!section) { return; } selectedSection = section.name; highlightSelectedRow(); renderComparisonChart(); }\n");
@@ -154,7 +175,7 @@ public class HtmlReporter {
         html.append("        function renderComparisonChart() {\n");
         html.append("            const section = comparisonSections.find(item => item.name === selectedSection);\n");
         html.append("            if (!section) { return; }\n");
-        html.append("            document.getElementById('current-section-name').innerText = section.name;\n");
+        html.append("            document.getElementById('current-section-name').innerText = buildSectionDisplayName(section.name);\n");
         html.append("            const mode = reportModes[currentMode];\n");
         html.append("            const supportedRuns = section.runs.filter(run => run[currentMode].supported).slice();\n");
         html.append("            if (currentGroupSort !== 'none') {\n");
@@ -163,14 +184,17 @@ public class HtmlReporter {
         html.append("                    return currentSortDirection === 'asc' ? delta : -delta;\n");
         html.append("                });\n");
         html.append("            }\n");
-        html.append("            const options = buildBaseChartOptions(mode, section.tooltip || '');\n");
-        html.append("            options.title.text = section.name;\n");
+        html.append("            const options = buildBaseChartOptions(mode, buildSectionSubtitle(section.tooltip || ''));\n");
+        html.append("            options.title.text = buildSectionChartTitle(section.name);\n");
         html.append("            if (supportedRuns.length > 0) {\n");
-        html.append("                options.series = supportedRuns.map(run => ({ name: run.label, data: [run[currentMode].min, run[currentMode].avg, run[currentMode].max] }));\n");
-        html.append("                options.xaxis.categories = ['Min', 'Avg', 'Max'];\n");
+        html.append("                options.series = buildComparisonSeries(supportedRuns);\n");
+        html.append("                options.colors = buildComparisonSeriesColors(supportedRuns);\n");
+        html.append("                options.fill = { opacity: buildComparisonSeriesOpacities(supportedRuns) };\n");
+        html.append("                options.xaxis.categories = getVisibleMetricCategories();\n");
         html.append("                options.yaxis = { title: { text: mode.axisLabel, style: { color: '#94a3b8' } }, labels: { style: { colors: '#94a3b8' }, formatter: (v) => formatMetricValue(v, currentMode) } };\n");
-        html.append("                options.dataLabels = { enabled: true, formatter: (val) => formatMetricValue(val, currentMode), offsetY: -28, style: { fontSize: '10px', colors: ['#f8fafc'] } };\n");
+        html.append("                options.dataLabels = { enabled: true, formatter: (val, opts) => shouldRenderInsideChartDataLabel(val, opts) ? formatChartBarValue(val, currentMode) : '', offsetY: 6, style: { fontSize: '9px', colors: ['#f8fafc'], fontFamily: 'JetBrains Mono', fontWeight: 600 } };\n");
         html.append("                options.tooltip = { theme: 'dark', y: { formatter: (v) => formatMetricValue(v, currentMode) } };\n");
+        html.append("                if (options.series.every(series => series.data.length === 0)) { options.series = []; options.noData = { text: 'Enable at least one metric', align: 'center', verticalAlign: 'middle', style: { color: '#f8fafc' } }; }\n");
         html.append("            } else {\n");
         html.append("                options.series = [];\n");
         html.append("                options.noData = { text: unavailableFromRuns(section.runs), align: 'center', verticalAlign: 'middle', style: { color: '#f8fafc' } };\n");
@@ -203,7 +227,24 @@ public class HtmlReporter {
         html.append("            document.getElementById('group-direction-' + direction).classList.add('active');\n");
         html.append("            renderComparisonChart();\n");
         html.append("        }\n");
-        html.append("        window.onload = () => { setMode('" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "'); setGroupSort('none'); setSortDirection('asc'); };\n");
+        html.append("        function setBaselineRun(runLabel) {\n");
+        html.append("            baselineRunLabel = runLabel;\n");
+        html.append("            renderTable();\n");
+        html.append("            renderComparisonChart();\n");
+        html.append("        }\n");
+        html.append("        function toggleMetricVisibility(metricKey) {\n");
+        html.append("            visibleChartMetrics[metricKey] = !visibleChartMetrics[metricKey];\n");
+        html.append("            updateMetricVisibilityButtons();\n");
+        html.append("            renderComparisonChart();\n");
+        html.append("        }\n");
+        html.append("        function updateMetricVisibilityButtons() {\n");
+        html.append("            chartMetricDefinitions.forEach(metric => {\n");
+        html.append("                const button = document.getElementById('visible-metric-' + metric.key);\n");
+        html.append("                if (!button) { return; }\n");
+        html.append("                button.classList.toggle('active', !!visibleChartMetrics[metric.key]);\n");
+        html.append("            });\n");
+        html.append("        }\n");
+        html.append("        window.onload = () => { updateMetricVisibilityButtons(); setMode('" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "'); setGroupSort('none'); setSortDirection('asc'); };\n");
         html.append("    </script>\n");
         html.append("</body>\n</html>");
         writeHtml(filePath, html.toString(), "HTML comparison report");
@@ -229,6 +270,9 @@ public class HtmlReporter {
         html.append("        tr:hover td { background: #1e293b; color: #38bdf8; }\n");
         html.append("        tr.selected td { background: #0ea5e922 !important; color: #38bdf8; border-bottom-color: #0ea5e9; }\n");
         html.append("        .val { font-family: 'JetBrains Mono', monospace; font-size: 13px; }\n");
+        html.append("        .delta-better { color: #22c55e; }\n");
+        html.append("        .delta-worse { color: #f87171; }\n");
+        html.append("        .delta-neutral { color: #cbd5e1; }\n");
         html.append("        .specs-list { list-style: none; padding: 0; margin: 0; text-align: right; font-size: 12px; color: #f8fafc; }\n");
         html.append("        .spec-item { margin-bottom: 2px; border-bottom: 1px solid #1e293b; padding-bottom: 2px; }\n");
         html.append("        .spec-item:last-child { border-bottom: none; }\n");
@@ -276,16 +320,40 @@ public class HtmlReporter {
         html.append("        </div>\n");
     }
 
-    private static void appendComparisonSortControls(StringBuilder html) {
+    private static void appendVisibleMetricControls(StringBuilder html) {
+        html.append("        <div class=\"controls card\" style=\"padding: 16px 24px;\">\n");
+        html.append("            <span>Visible Metrics:</span>\n");
+        html.append("            <button class=\"mode-button metric-visibility-button active\" id=\"visible-metric-min\" onclick=\"toggleMetricVisibility('min')\">Min</button>\n");
+        html.append("            <button class=\"mode-button metric-visibility-button active\" id=\"visible-metric-median\" onclick=\"toggleMetricVisibility('median')\">Median</button>\n");
+        html.append("            <button class=\"mode-button metric-visibility-button active\" id=\"visible-metric-avg\" onclick=\"toggleMetricVisibility('avg')\">Avg</button>\n");
+        html.append("            <button class=\"mode-button metric-visibility-button active\" id=\"visible-metric-p95\" onclick=\"toggleMetricVisibility('p95')\">P95</button>\n");
+        html.append("            <button class=\"mode-button metric-visibility-button active\" id=\"visible-metric-max\" onclick=\"toggleMetricVisibility('max')\">Max</button>\n");
+        html.append("        </div>\n");
+    }
+
+    private static void appendComparisonSortControls(StringBuilder html, Collection<String> runLabels) {
         html.append("        <div class=\"controls card\" style=\"padding: 16px 24px;\">\n");
         html.append("            <span>Sort Groups By:</span>\n");
         html.append("            <button class=\"mode-button group-sort-button active\" id=\"group-sort-none\" onclick=\"setGroupSort('none')\">Original</button>\n");
         html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-min\" onclick=\"setGroupSort('min')\">Min</button>\n");
+        html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-median\" onclick=\"setGroupSort('median')\">Median</button>\n");
         html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-avg\" onclick=\"setGroupSort('avg')\">Avg</button>\n");
+        html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-p95\" onclick=\"setGroupSort('p95')\">P95</button>\n");
         html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-max\" onclick=\"setGroupSort('max')\">Max</button>\n");
         html.append("            <span style=\"margin-left: 16px;\">Direction:</span>\n");
         html.append("            <button class=\"mode-button group-direction-button active\" id=\"group-direction-asc\" onclick=\"setSortDirection('asc')\">Ascending</button>\n");
         html.append("            <button class=\"mode-button group-direction-button\" id=\"group-direction-desc\" onclick=\"setSortDirection('desc')\">Descending</button>\n");
+        html.append("            <span style=\"margin-left: 16px;\">Baseline Run:</span>\n");
+        html.append("            <select id=\"baseline-run-select\" onchange=\"setBaselineRun(this.value)\" style=\"margin-left: 8px; background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 10px; padding: 10px 14px;\">\n");
+        html.append("                <option value=\"\">Off</option>\n");
+        for (String runLabel : runLabels) {
+            html.append("                <option value=\"")
+                    .append(escapeHtml(runLabel))
+                    .append("\">")
+                    .append(escapeHtml(runLabel))
+                    .append("</option>\n");
+        }
+        html.append("            </select>\n");
         html.append("        </div>\n");
     }
 
@@ -398,18 +466,27 @@ public class HtmlReporter {
         ProfileData.MetricStats stats = mode.stats(snapshot);
         boolean supported = mode.isSupported(snapshot);
         return String.format(Locale.US,
-                "{ supported: %s, unavailable: '%s', count: %d, min: %.6f, avg: %.6f, max: %.6f, total: %.6f }",
+                "{ supported: %s, unavailable: '%s', count: %d, min: %.6f, median: %.6f, avg: %.6f, p95: %.6f, max: %.6f, total: %.6f }",
                 supported ? "true" : "false",
                 escapeJs(mode.unavailableLabel(snapshot)),
                 stats.getCount(),
                 mode.normalize(stats.getMin()),
+                mode.normalize(stats.getMedian()),
                 mode.normalize(Math.round(stats.getAvg())),
+                mode.normalize(stats.getP95()),
                 mode.normalize(stats.getMax()),
                 mode.normalize(stats.getTotal()));
     }
 
     private static void appendSharedScriptHelpers(StringBuilder html) {
         html.append("        function escapeHtml(value) { return (value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\\\"', '&quot;'); }\n");
+        html.append("        const chartMetricDefinitions = [\n");
+        html.append("            { key: 'min', label: 'Min' },\n");
+        html.append("            { key: 'median', label: 'Median' },\n");
+        html.append("            { key: 'avg', label: 'Avg' },\n");
+        html.append("            { key: 'p95', label: 'P95' },\n");
+        html.append("            { key: 'max', label: 'Max' }\n");
+        html.append("        ];\n");
         html.append("        function formatMetricValue(value, modeKey) {\n");
         html.append("            if (modeKey === '" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "') {\n");
         html.append("                return value.toFixed(4) + ' " + escapeJs(Profiler.getDisplayUnit().label()) + "';\n");
@@ -419,16 +496,134 @@ public class HtmlReporter {
         html.append("            if (value < 1024 * 1024 * 1024) { return (value / (1024 * 1024)).toFixed(2) + ' MB'; }\n");
         html.append("            return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB';\n");
         html.append("        }\n");
+        html.append("        function formatSignedMetricValue(value, modeKey) {\n");
+        html.append("            const sign = value > 0 ? '+' : value < 0 ? '-' : '';\n");
+        html.append("            return sign + formatMetricValue(Math.abs(value), modeKey);\n");
+        html.append("        }\n");
+        html.append("        function formatChartBarValue(value, modeKey) {\n");
+        html.append("            if (modeKey === '" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "') {\n");
+        html.append("                return value.toFixed(4);\n");
+        html.append("            }\n");
+        html.append("            return formatMetricValue(value, modeKey);\n");
+        html.append("        }\n");
+        html.append("        function buildSectionDisplayName(sectionName) {\n");
+        html.append("            return sectionName + ' (' + currentModeDisplayHint() + ', lower is better)';\n");
+        html.append("        }\n");
+        html.append("        function buildSectionChartTitle(sectionName) {\n");
+        html.append("            return sectionName + ' (' + currentModeDisplayHint() + ')';\n");
+        html.append("        }\n");
+        html.append("        function buildSectionSubtitle(baseSubtitle) {\n");
+        html.append("            return (baseSubtitle ? baseSubtitle + ' • ' : '') + 'Lower is better';\n");
+        html.append("        }\n");
+        html.append("        function currentModeDisplayHint() {\n");
+        html.append("            if (currentMode === '" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "') {\n");
+        html.append("                return '" + escapeJs(Profiler.getDisplayUnit().label()) + "';\n");
+        html.append("            }\n");
+        html.append("            return 'allocated memory';\n");
+        html.append("        }\n");
+        html.append("        function getVisibleMetricKeys() {\n");
+        html.append("            return chartMetricDefinitions.filter(metric => visibleChartMetrics[metric.key]).map(metric => metric.key);\n");
+        html.append("        }\n");
+        html.append("        function getVisibleMetricCategories() {\n");
+        html.append("            return chartMetricDefinitions.filter(metric => visibleChartMetrics[metric.key]).map(metric => metric.label);\n");
+        html.append("        }\n");
+        html.append("        function buildChartSeriesData(metric) {\n");
+        html.append("            return getVisibleMetricKeys().map(metricKey => metric[metricKey]);\n");
+        html.append("        }\n");
+        html.append("        function shouldRenderDataLabel(value, opts) {\n");
+        html.append("            const series = opts && opts.w && opts.w.config && Array.isArray(opts.w.config.series) ? opts.w.config.series : [];\n");
+        html.append("            let maxValue = 0;\n");
+        html.append("            series.forEach(entry => (entry.data || []).forEach(point => { if (typeof point === 'number' && point > maxValue) { maxValue = point; } }));\n");
+        html.append("            if (maxValue <= 0) { return true; }\n");
+        html.append("            return value >= maxValue * 0.18;\n");
+        html.append("        }\n");
+        html.append("        function shouldRenderInsideChartDataLabel(value, opts) {\n");
+        html.append("            return shouldRenderDataLabel(value, opts);\n");
+        html.append("        }\n");
+        html.append("        function buildDeltaPercentLabel(value, baselineValue) {\n");
+        html.append("            if (baselineValue === null || baselineValue === undefined || baselineValue <= 0) { return ''; }\n");
+        html.append("            const percentDelta = ((value - baselineValue) / baselineValue) * 100;\n");
+        html.append("            if (Math.abs(percentDelta) < 0.05) { return '0%'; }\n");
+        html.append("            const absolutePercent = Math.abs(percentDelta);\n");
+        html.append("            const rounded = absolutePercent >= 10 ? absolutePercent.toFixed(0) : absolutePercent.toFixed(1);\n");
+        html.append("            const sign = percentDelta > 0 ? '+' : '-';\n");
+        html.append("            return sign + rounded + '%';\n");
+        html.append("        }\n");
+        html.append("        function buildComparisonSeries(runs) {\n");
+        html.append("            return runs.map(run => ({\n");
+        html.append("                name: buildComparisonSeriesName(run),\n");
+            html.append("                data: buildChartSeriesDataForRun(run[currentMode])\n");
+        html.append("            }));\n");
+        html.append("        }\n");
+        html.append("        function buildChartSeriesDataForRun(metric) {\n");
+        html.append("            return getVisibleMetricKeys().map(metricKey => metric[metricKey]);\n");
+        html.append("        }\n");
+        html.append("        function metricKeyAtIndex(dataPointIndex) {\n");
+        html.append("            return getVisibleMetricKeys()[dataPointIndex] || null;\n");
+        html.append("        }\n");
+        html.append("        function buildComparisonSeriesName(run) {\n");
+        html.append("            return baselineRunLabel && run.label === baselineRunLabel && !run.label.includes('(Baseline)') ? run.label + ' (Baseline)' : run.label;\n");
+        html.append("        }\n");
+        html.append("        function buildComparisonSeriesColors(runs) {\n");
+        html.append("            const mutedPalette = ['#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#f97316', '#14b8a6'];\n");
+        html.append("            let colorIndex = 0;\n");
+        html.append("            return runs.map(run => {\n");
+        html.append("                if (baselineRunLabel && run.label === baselineRunLabel) {\n");
+        html.append("                    return '#38bdf8';\n");
+        html.append("                }\n");
+        html.append("                const color = mutedPalette[colorIndex % mutedPalette.length];\n");
+        html.append("                colorIndex += 1;\n");
+        html.append("                return color;\n");
+        html.append("            });\n");
+        html.append("        }\n");
+        html.append("        function buildComparisonSeriesOpacities(runs) {\n");
+        html.append("            if (!baselineRunLabel) { return runs.map(() => 0.92); }\n");
+        html.append("            return runs.map(run => run.label === baselineRunLabel ? 1 : 0.58);\n");
+        html.append("        }\n");
+        html.append("        function getComparisonMetricKey() {\n");
+        html.append("            return currentGroupSort === 'none' ? 'avg' : currentGroupSort;\n");
+        html.append("        }\n");
+        html.append("        function getComparisonMetricHeader() {\n");
+        html.append("            const metricKey = getComparisonMetricKey();\n");
+        html.append("            if (metricKey === 'min') { return 'Best Min'; }\n");
+        html.append("            if (metricKey === 'median') { return 'Best Median'; }\n");
+        html.append("            if (metricKey === 'p95') { return 'Best P95'; }\n");
+        html.append("            if (metricKey === 'max') { return 'Best Max'; }\n");
+        html.append("            return 'Best Avg';\n");
+        html.append("        }\n");
+        html.append("        function renderBaselineHeaderCell() {\n");
+        html.append("            return baselineRunLabel ? '<th>Delta vs Baseline</th>' : '';\n");
+        html.append("        }\n");
+        html.append("        function renderBaselineValueCell(runs, bestValue, metricKey) {\n");
+        html.append("            if (!baselineRunLabel) { return ''; }\n");
+        html.append("            const baselineRun = runs.find(run => run.label === baselineRunLabel);\n");
+        html.append("            if (!baselineRun) { return '<td class=\"val\">Unavailable</td>'; }\n");
+        html.append("            if (!baselineRun[currentMode].supported) { return '<td class=\"val\">' + unavailableFromRuns([baselineRun]) + '</td>'; }\n");
+        html.append("            if (bestValue === null) { return '<td class=\"val\">' + unavailableFromRuns(runs) + '</td>'; }\n");
+        html.append("            const baselineValue = baselineRun[currentMode][metricKey];\n");
+        html.append("            const delta = bestValue - baselineValue;\n");
+        html.append("            const percentDelta = baselineValue === 0 ? null : (delta / baselineValue) * 100;\n");
+        html.append("            const percentText = percentDelta === null ? 'n/a' : (percentDelta > 0 ? '+' : '') + percentDelta.toFixed(2) + '%';\n");
+        html.append("            return '<td class=\"val ' + baselineDeltaClass(percentDelta) + '\">' + formatSignedMetricValue(delta, currentMode) + ' (' + percentText + ')</td>';\n");
+        html.append("        }\n");
+        html.append("        function baselineDeltaClass(percentDelta) {\n");
+        html.append("            if (percentDelta === null || Math.abs(percentDelta) < 1.0) { return 'delta-neutral'; }\n");
+        html.append("            return percentDelta < 0 ? 'delta-better' : 'delta-worse';\n");
+        html.append("        }\n");
+        html.append("        function deltaPercentColor(percentLabel) {\n");
+        html.append("            if (!percentLabel || percentLabel === '0%') { return '#cbd5e1'; }\n");
+        html.append("            return percentLabel.startsWith('-') ? '#22c55e' : '#f87171';\n");
+        html.append("        }\n");
         html.append("        function buildBaseChartOptions(mode, subtitle) {\n");
         html.append("            return {\n");
         html.append("                title: { text: '', align: 'left', style: { color: '#38bdf8', fontSize: '20px' } },\n");
         html.append("                subtitle: { text: subtitle || '', align: 'left', style: { color: '#94a3b8', fontSize: '14px' } },\n");
         html.append("                chart: { type: 'bar', height: 360, background: '#1e293b', toolbar: { show: true, tools: { download: true, selection: false, zoom: false, zoomin: false, zoomout: false, pan: false, reset: false } } },\n");
-        html.append("                annotations: { texts: [{ x: '98%', y: 12, text: chartSpecs.join(' | '), textAnchor: 'end', style: { fontSize: '11px', fontFamily: 'Inter', color: '#f8fafc' } }] },\n");
+        html.append("                annotations: { texts: [{ x: '98%', y: 44, text: chartSpecs.join(' | '), textAnchor: 'end', style: { fontSize: '10px', fontFamily: 'Inter', color: '#f8fafc' } }] },\n");
         html.append("                series: [],\n");
         html.append("                colors: ['#10b981', '#f59e0b', '#ef4444', '#38bdf8', '#f97316', '#a855f7'],\n");
-        html.append("                plotOptions: { bar: { columnWidth: '55%', borderRadius: 6, dataLabels: { position: 'top' } } },\n");
-        html.append("                grid: { borderColor: '#334155', strokeDashArray: 4, padding: { top: 40 } },\n");
+        html.append("                plotOptions: { bar: { columnWidth: '55%', borderRadius: 6, dataLabels: { position: 'center' } } },\n");
+        html.append("                grid: { borderColor: '#334155', strokeDashArray: 4, padding: { top: 72 } },\n");
         html.append("                theme: { mode: 'dark' },\n");
         html.append("                legend: { position: 'top', horizontalAlign: 'center', labels: { colors: '#f8fafc' } },\n");
         html.append("                xaxis: { categories: [], labels: { style: { colors: '#94a3b8', fontSize: '12px' } }, axisBorder: { show: false }, axisTicks: { show: false } },\n");
@@ -439,7 +634,73 @@ public class HtmlReporter {
         html.append("            const chartDiv = document.querySelector('#chart');\n");
         html.append("            if (chart) { chart.destroy(); }\n");
         html.append("            chart = new ApexCharts(chartDiv, options);\n");
-        html.append("            chart.render();\n");
+        html.append("            Promise.resolve(chart.render()).then(() => setTimeout(renderCustomChartLabels, 60));\n");
+        html.append("        }\n");
+        html.append("        function renderCustomChartLabels() {\n");
+        html.append("            const svg = document.querySelector('#chart .apexcharts-svg');\n");
+        html.append("            if (!svg || !chart || !chart.w || !chart.w.config) { return; }\n");
+        html.append("            svg.querySelectorAll('.ga-custom-chart-labels').forEach(node => node.remove());\n");
+        html.append("            const inner = svg.querySelector('.apexcharts-inner') || svg;\n");
+        html.append("            const labelLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');\n");
+        html.append("            labelLayer.setAttribute('class', 'ga-custom-chart-labels');\n");
+        html.append("            const percentLabelY = 18;\n");
+        html.append("            const series = chart.w.config.series || [];\n");
+        html.append("            const barPaths = svg.querySelectorAll('.apexcharts-bar-series .apexcharts-series path');\n");
+        html.append("            const baselineSeriesIndex = series.findIndex(item => baselineRunLabel && item.name === buildComparisonSeriesName({ label: baselineRunLabel }));\n");
+        html.append("            const pointsPerSeries = series.length > 0 && Array.isArray(series[0].data) ? series[0].data.length : 0;\n");
+        html.append("            if (pointsPerSeries <= 0) { return; }\n");
+        html.append("            barPaths.forEach((barPath, index) => {\n");
+        html.append("                if (!barPath) { return; }\n");
+        html.append("                const seriesIndex = Math.floor(index / pointsPerSeries);\n");
+        html.append("                const dataPointIndex = index % pointsPerSeries;\n");
+        html.append("                const percentLabel = buildBarDeltaLabel(series, seriesIndex, dataPointIndex, baselineSeriesIndex);\n");
+        html.append("                if (!percentLabel) { return; }\n");
+        html.append("                const anchor = extractBarLabelAnchor(barPath);\n");
+        html.append("                if (!anchor) { return; }\n");
+        html.append("                appendSvgText(labelLayer, anchor.x, percentLabelY, percentLabel, deltaPercentColor(percentLabel), '9px');\n");
+        html.append("            });\n");
+        html.append("            inner.appendChild(labelLayer);\n");
+        html.append("        }\n");
+        html.append("        function extractBarLabelAnchor(barPath) {\n");
+        html.append("            const pathData = barPath && typeof barPath.getAttribute === 'function' ? barPath.getAttribute('d') : '';\n");
+        html.append("            if (!pathData) { return null; }\n");
+        html.append("            const coordinates = pathData.match(/-?\\d*\\.?\\d+/g);\n");
+        html.append("            if (!coordinates || coordinates.length < 4) { return null; }\n");
+        html.append("            let minX = Number.POSITIVE_INFINITY;\n");
+        html.append("            let maxX = Number.NEGATIVE_INFINITY;\n");
+        html.append("            let minY = Number.POSITIVE_INFINITY;\n");
+        html.append("            for (let i = 0; i + 1 < coordinates.length; i += 2) {\n");
+        html.append("                const x = parseFloat(coordinates[i]);\n");
+        html.append("                const y = parseFloat(coordinates[i + 1]);\n");
+        html.append("                if (!Number.isFinite(x) || !Number.isFinite(y)) { continue; }\n");
+        html.append("                minX = Math.min(minX, x);\n");
+        html.append("                maxX = Math.max(maxX, x);\n");
+        html.append("                minY = Math.min(minY, y);\n");
+        html.append("            }\n");
+        html.append("            if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY)) { return null; }\n");
+        html.append("            return { x: (minX + maxX) / 2, y: minY };\n");
+        html.append("        }\n");
+        html.append("        function buildBarDeltaLabel(series, seriesIndex, dataPointIndex, baselineSeriesIndex) {\n");
+        html.append("            if (baselineSeriesIndex < 0 || seriesIndex === baselineSeriesIndex) { return ''; }\n");
+        html.append("            const baselineSeries = series[baselineSeriesIndex];\n");
+        html.append("            const seriesEntry = series[seriesIndex];\n");
+        html.append("            if (!baselineSeries || !seriesEntry) { return ''; }\n");
+        html.append("            const baselineValue = Array.isArray(baselineSeries.data) ? baselineSeries.data[dataPointIndex] : null;\n");
+        html.append("            const value = Array.isArray(seriesEntry.data) ? seriesEntry.data[dataPointIndex] : null;\n");
+        html.append("            if (typeof baselineValue !== 'number' || typeof value !== 'number') { return ''; }\n");
+        html.append("            return buildDeltaPercentLabel(value, baselineValue);\n");
+        html.append("        }\n");
+        html.append("        function appendSvgText(layer, x, y, text, color, fontSize) {\n");
+        html.append("            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');\n");
+        html.append("            label.setAttribute('x', x.toFixed(2));\n");
+        html.append("            label.setAttribute('y', y.toFixed(2));\n");
+        html.append("            label.setAttribute('fill', color);\n");
+        html.append("            label.setAttribute('font-size', fontSize);\n");
+        html.append("            label.setAttribute('font-family', 'JetBrains Mono, monospace');\n");
+        html.append("            label.setAttribute('font-weight', '600');\n");
+        html.append("            label.setAttribute('text-anchor', 'middle');\n");
+        html.append("            label.textContent = text;\n");
+        html.append("            layer.appendChild(label);\n");
         html.append("        }\n");
     }
 

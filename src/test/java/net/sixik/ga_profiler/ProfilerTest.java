@@ -20,6 +20,7 @@ class ProfilerTest {
         Profiler.clearAllocationCounterOverrideForTesting();
         Profiler.setAllocationProfilingEnabled(false);
         Profiler.setDisplayUnit(Profiler.TimeUnit.MILLISECONDS);
+        Profiler.applySampleLimitToAllSections(0);
         Profiler.reset();
     }
 
@@ -72,6 +73,22 @@ class ProfilerTest {
 
         ProfileData.Snapshot snapshot = snapshotByName().get("limited");
         assertEquals(2L, snapshot.getExecutionTime().getCount());
+    }
+
+    @Test
+    void computesMedianAndP95FromCollectedSamples() {
+        Profiler.reset();
+        Profiler.Section section = Profiler.register("stats.section", null, 0);
+
+        Profiler.addSample(section, 10L);
+        Profiler.addSample(section, 20L);
+        Profiler.addSample(section, 30L);
+        Profiler.addSample(section, 40L);
+        Profiler.addSample(section, 100L);
+
+        ProfileData.Snapshot snapshot = snapshotByName().get("stats.section");
+        assertEquals(30L, snapshot.getExecutionTime().getMedian());
+        assertEquals(100L, snapshot.getExecutionTime().getP95());
     }
 
     @Test
@@ -213,6 +230,28 @@ class ProfilerTest {
         assertEquals(ProfileData.MetricAvailability.COLLECTED, snapshot.getMemoryAllocationAvailability());
         assertEquals(512L, snapshot.getMemoryAllocation().getTotal());
         assertEquals("Allocation dump", snapshot.getTooltip());
+    }
+
+    @Test
+    void dumpAndLoadRoundTripPreservesMedianAndP95() throws Exception {
+        Profiler.reset();
+        Profiler.Section section = Profiler.register("stats.round.trip", null, 0);
+
+        Profiler.addSample(section, 10L);
+        Profiler.addSample(section, 20L);
+        Profiler.addSample(section, 30L);
+        Profiler.addSample(section, 40L);
+        Profiler.addSample(section, 100L);
+
+        Path dump = Files.createTempFile("profiler-percentiles", ".dump");
+        Profiler.dump(dump.toString());
+        ProfileData.Snapshot snapshot = Profiler.load(dump.toString()).stream()
+                .filter(item -> item.getName().equals("stats.round.trip"))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(30L, snapshot.getExecutionTime().getMedian());
+        assertEquals(100L, snapshot.getExecutionTime().getP95());
     }
 
     @Test

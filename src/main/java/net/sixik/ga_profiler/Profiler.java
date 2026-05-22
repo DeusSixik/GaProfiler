@@ -21,6 +21,7 @@ public final class Profiler {
     private static final int INITIAL_STACK_CAPACITY = 256;
     private static final int INITIAL_SECTION_CAPACITY = 16;
     private static final String DUMP_FORMAT_V2 = "GA_PROFILER_DUMP_V2";
+    private static final String DUMP_FORMAT_V3 = "GA_PROFILER_DUMP_V3";
 
     private static final List<Section> SECTIONS = new ArrayList<>();
     private static final Map<String, Section> SECTIONS_BY_NAME = new HashMap<>();
@@ -105,10 +106,14 @@ public final class Profiler {
         private long[] maxDurations = new long[INITIAL_SECTION_CAPACITY];
         private long[] totalDurations = new long[INITIAL_SECTION_CAPACITY];
         private long[] counts = new long[INITIAL_SECTION_CAPACITY];
+        private long[][] durationSamples = new long[INITIAL_SECTION_CAPACITY][];
+        private int[] durationSampleSizes = new int[INITIAL_SECTION_CAPACITY];
         private long[] minAllocatedBytes = new long[INITIAL_SECTION_CAPACITY];
         private long[] maxAllocatedBytes = new long[INITIAL_SECTION_CAPACITY];
         private long[] totalAllocatedBytes = new long[INITIAL_SECTION_CAPACITY];
         private long[] allocationCounts = new long[INITIAL_SECTION_CAPACITY];
+        private long[][] allocationSamples = new long[INITIAL_SECTION_CAPACITY][];
+        private int[] allocationSampleSizes = new int[INITIAL_SECTION_CAPACITY];
         private boolean[] touched = new boolean[INITIAL_SECTION_CAPACITY];
         private int[] touchedIds = new int[INITIAL_SECTION_CAPACITY];
         private int touchedCount;
@@ -199,12 +204,12 @@ public final class Profiler {
             return;
         }
 
-        recordExecutionDuration(state, sectionId, duration);
+        recordExecutionDuration(state, section, duration);
 
         long allocationStart = state.allocationStartBytes[stackIndex];
         if (allocationProfilingEnabled && allocationStart >= 0L) {
             long allocationDelta = Math.max(0L, allocationCounter.currentThreadAllocatedBytes() - allocationStart);
-            recordAllocationBytes(state, sectionId, allocationDelta);
+            recordAllocationBytes(state, section, allocationDelta);
         }
     }
 
@@ -221,7 +226,7 @@ public final class Profiler {
             return;
         }
 
-        recordExecutionDuration(state, section.id, durationNs);
+        recordExecutionDuration(state, section, durationNs);
     }
 
     public static ProfileScope scope(Section section) {
@@ -309,20 +314,24 @@ public final class Profiler {
 
     public static void dump(String path) {
         try (BufferedWriter writer = Files.newBufferedWriter(Path.of(path))) {
-            writer.write(DUMP_FORMAT_V2);
+            writer.write(DUMP_FORMAT_V3);
             writer.write('\n');
-            writer.write("Name\tTooltip\tTimeMin\tTimeMax\tTimeTotal\tTimeCount\tAllocMin\tAllocMax\tAllocTotal\tAllocCount\tAllocAvailability\n");
+            writer.write("Name\tTooltip\tTimeMin\tTimeMedian\tTimeMax\tTimeP95\tTimeTotal\tTimeCount\tAllocMin\tAllocMedian\tAllocMax\tAllocP95\tAllocTotal\tAllocCount\tAllocAvailability\n");
 
             for (ProfileData.Snapshot snapshot : getData()) {
                 writer.write(String.join("\t",
                         sanitizeField(snapshot.getName()),
                         sanitizeField(snapshot.getTooltip()),
                         Long.toString(snapshot.getExecutionTime().getMin()),
+                        Long.toString(snapshot.getExecutionTime().getMedian()),
                         Long.toString(snapshot.getExecutionTime().getMax()),
+                        Long.toString(snapshot.getExecutionTime().getP95()),
                         Long.toString(snapshot.getExecutionTime().getTotal()),
                         Long.toString(snapshot.getExecutionTime().getCount()),
                         Long.toString(snapshot.getMemoryAllocation().getMin()),
+                        Long.toString(snapshot.getMemoryAllocation().getMedian()),
                         Long.toString(snapshot.getMemoryAllocation().getMax()),
+                        Long.toString(snapshot.getMemoryAllocation().getP95()),
                         Long.toString(snapshot.getMemoryAllocation().getTotal()),
                         Long.toString(snapshot.getMemoryAllocation().getCount()),
                         snapshot.getMemoryAllocationAvailability().name()
@@ -343,7 +352,9 @@ public final class Profiler {
                 return snapshots;
             }
 
-            if (DUMP_FORMAT_V2.equals(firstLine)) {
+            if (DUMP_FORMAT_V3.equals(firstLine)) {
+                loadV3(reader, snapshots);
+            } else if (DUMP_FORMAT_V2.equals(firstLine)) {
                 loadV2(reader, snapshots);
             } else {
                 loadLegacyV1(reader, snapshots);
@@ -410,15 +421,20 @@ public final class Profiler {
         state.maxDurations = java.util.Arrays.copyOf(state.maxDurations, newCapacity);
         state.totalDurations = java.util.Arrays.copyOf(state.totalDurations, newCapacity);
         state.counts = java.util.Arrays.copyOf(state.counts, newCapacity);
+        state.durationSamples = java.util.Arrays.copyOf(state.durationSamples, newCapacity);
+        state.durationSampleSizes = java.util.Arrays.copyOf(state.durationSampleSizes, newCapacity);
         state.minAllocatedBytes = java.util.Arrays.copyOf(state.minAllocatedBytes, newCapacity);
         state.maxAllocatedBytes = java.util.Arrays.copyOf(state.maxAllocatedBytes, newCapacity);
         state.totalAllocatedBytes = java.util.Arrays.copyOf(state.totalAllocatedBytes, newCapacity);
         state.allocationCounts = java.util.Arrays.copyOf(state.allocationCounts, newCapacity);
+        state.allocationSamples = java.util.Arrays.copyOf(state.allocationSamples, newCapacity);
+        state.allocationSampleSizes = java.util.Arrays.copyOf(state.allocationSampleSizes, newCapacity);
         state.touched = java.util.Arrays.copyOf(state.touched, newCapacity);
         state.touchedIds = java.util.Arrays.copyOf(state.touchedIds, newCapacity);
     }
 
-    private static void recordExecutionDuration(ThreadState state, int sectionId, long duration) {
+    private static void recordExecutionDuration(ThreadState state, Section section, long duration) {
+        int sectionId = section.id;
         if (!state.touched[sectionId]) {
             state.touched[sectionId] = true;
             if (state.touchedCount == state.touchedIds.length) {
@@ -434,9 +450,11 @@ public final class Profiler {
 
         state.totalDurations[sectionId] += duration;
         state.counts[sectionId]++;
+        appendSample(state.durationSamples, state.durationSampleSizes, sectionId, duration, section.maxSamples);
     }
 
-    private static void recordAllocationBytes(ThreadState state, int sectionId, long bytes) {
+    private static void recordAllocationBytes(ThreadState state, Section section, long bytes) {
+        int sectionId = section.id;
         if (state.allocationCounts[sectionId] == 0L) {
             state.minAllocatedBytes[sectionId] = bytes;
             state.maxAllocatedBytes[sectionId] = bytes;
@@ -447,6 +465,7 @@ public final class Profiler {
 
         state.totalAllocatedBytes[sectionId] += bytes;
         state.allocationCounts[sectionId]++;
+        appendSample(state.allocationSamples, state.allocationSampleSizes, sectionId, bytes, section.maxSamples);
     }
 
     private static ProfileData.MetricStats mergeExecutionStats(int sectionId, long generation) {
@@ -454,6 +473,7 @@ public final class Profiler {
         long max = Long.MIN_VALUE;
         long total = 0L;
         long count = 0L;
+        int sampleCount = 0;
 
         for (ThreadState state : LIVE_STATES) {
             if (state.generation != generation || sectionId >= state.counts.length) {
@@ -469,15 +489,20 @@ public final class Profiler {
             total += state.totalDurations[sectionId];
             min = Math.min(min, state.minDurations[sectionId]);
             max = Math.max(max, state.maxDurations[sectionId]);
+            sampleCount += state.durationSampleSizes[sectionId];
         }
 
         if (count == 0L) {
             return ProfileData.MetricStats.empty();
         }
 
+        long[] sortedSamples = mergedSortedSamples(generation, sectionId, true, sampleCount);
+
         return new ProfileData.MetricStats(
                 min == Long.MAX_VALUE ? 0L : min,
+                medianOf(sortedSamples),
                 max == Long.MIN_VALUE ? 0L : max,
+                percentileOf(sortedSamples, 0.95),
                 total,
                 count
         );
@@ -488,6 +513,7 @@ public final class Profiler {
         long max = Long.MIN_VALUE;
         long total = 0L;
         long count = 0L;
+        int sampleCount = 0;
 
         for (ThreadState state : LIVE_STATES) {
             if (state.generation != generation || sectionId >= state.allocationCounts.length) {
@@ -503,15 +529,20 @@ public final class Profiler {
             total += state.totalAllocatedBytes[sectionId];
             min = Math.min(min, state.minAllocatedBytes[sectionId]);
             max = Math.max(max, state.maxAllocatedBytes[sectionId]);
+            sampleCount += state.allocationSampleSizes[sectionId];
         }
 
         if (count == 0L) {
             return ProfileData.MetricStats.empty();
         }
 
+        long[] sortedSamples = mergedSortedSamples(generation, sectionId, false, sampleCount);
+
         return new ProfileData.MetricStats(
                 min == Long.MAX_VALUE ? 0L : min,
+                medianOf(sortedSamples),
                 max == Long.MIN_VALUE ? 0L : max,
+                percentileOf(sortedSamples, 0.95),
                 total,
                 count
         );
@@ -533,10 +564,12 @@ public final class Profiler {
             state.maxDurations[sectionId] = 0L;
             state.totalDurations[sectionId] = 0L;
             state.counts[sectionId] = 0L;
+            state.durationSampleSizes[sectionId] = 0;
             state.minAllocatedBytes[sectionId] = 0L;
             state.maxAllocatedBytes[sectionId] = 0L;
             state.totalAllocatedBytes[sectionId] = 0L;
             state.allocationCounts[sectionId] = 0L;
+            state.allocationSampleSizes[sectionId] = 0;
             state.touched[sectionId] = false;
             state.touchedIds[i] = 0;
         }
@@ -544,6 +577,44 @@ public final class Profiler {
         state.depth = 0;
         state.touchedCount = 0;
         state.generation = generation;
+    }
+
+    private static void loadV3(BufferedReader reader, List<ProfileData.Snapshot> snapshots) throws IOException {
+        reader.readLine();
+
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.trim().isEmpty()) {
+                continue;
+            }
+
+            String[] parts = line.split("\t", -1);
+            if (parts.length < 15) {
+                continue;
+            }
+
+            snapshots.add(new ProfileData.Snapshot(
+                    parts[0],
+                    parts[1].isEmpty() ? null : parts[1],
+                    new ProfileData.MetricStats(
+                            Long.parseLong(parts[2]),
+                            Long.parseLong(parts[3]),
+                            Long.parseLong(parts[4]),
+                            Long.parseLong(parts[5]),
+                            Long.parseLong(parts[6]),
+                            Long.parseLong(parts[7])
+                    ),
+                    new ProfileData.MetricStats(
+                            Long.parseLong(parts[8]),
+                            Long.parseLong(parts[9]),
+                            Long.parseLong(parts[10]),
+                            Long.parseLong(parts[11]),
+                            Long.parseLong(parts[12]),
+                            Long.parseLong(parts[13])
+                    ),
+                    ProfileData.MetricAvailability.valueOf(parts[14])
+            ));
+        }
     }
 
     private static void loadV2(BufferedReader reader, List<ProfileData.Snapshot> snapshots) throws IOException {
@@ -612,5 +683,85 @@ public final class Profiler {
             return "";
         }
         return value.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ');
+    }
+
+    private static void appendSample(long[][] sampleBuckets, int[] sampleSizes, int sectionId, long value, long maxSamples) {
+        long[] samples = sampleBuckets[sectionId];
+        int size = sampleSizes[sectionId];
+        if (samples == null) {
+            samples = new long[initialSampleCapacity(maxSamples)];
+            sampleBuckets[sectionId] = samples;
+        } else if (size == samples.length) {
+            sampleBuckets[sectionId] = java.util.Arrays.copyOf(samples, nextSampleCapacity(samples.length, maxSamples, size + 1));
+            samples = sampleBuckets[sectionId];
+        }
+
+        samples[size] = value;
+        sampleSizes[sectionId] = size + 1;
+    }
+
+    private static int initialSampleCapacity(long maxSamples) {
+        if (maxSamples > 0L) {
+            return (int) Math.max(1L, Math.min(8L, maxSamples));
+        }
+        return 8;
+    }
+
+    private static int nextSampleCapacity(int currentCapacity, long maxSamples, int requiredCapacity) {
+        long nextCapacity = Math.max(1L, currentCapacity);
+        while (nextCapacity < requiredCapacity) {
+            nextCapacity *= 2L;
+        }
+        if (maxSamples > 0L) {
+            nextCapacity = Math.min(nextCapacity, maxSamples);
+        }
+        return (int) Math.max(nextCapacity, requiredCapacity);
+    }
+
+    private static long[] mergedSortedSamples(long generation, int sectionId, boolean executionMetric, int sampleCount) {
+        long[] merged = new long[sampleCount];
+        int offset = 0;
+
+        for (ThreadState state : LIVE_STATES) {
+            if (state.generation != generation) {
+                continue;
+            }
+            int[] sampleSizes = executionMetric ? state.durationSampleSizes : state.allocationSampleSizes;
+            if (sectionId >= sampleSizes.length) {
+                continue;
+            }
+
+            int size = sampleSizes[sectionId];
+            if (size == 0) {
+                continue;
+            }
+
+            long[][] sampleBuckets = executionMetric ? state.durationSamples : state.allocationSamples;
+            System.arraycopy(sampleBuckets[sectionId], 0, merged, offset, size);
+            offset += size;
+        }
+
+        java.util.Arrays.sort(merged);
+        return merged;
+    }
+
+    private static long medianOf(long[] sortedSamples) {
+        if (sortedSamples.length == 0) {
+            return 0L;
+        }
+        int middle = sortedSamples.length / 2;
+        if ((sortedSamples.length & 1) == 1) {
+            return sortedSamples[middle];
+        }
+        return Math.round((sortedSamples[middle - 1] + sortedSamples[middle]) / 2.0);
+    }
+
+    private static long percentileOf(long[] sortedSamples, double percentile) {
+        if (sortedSamples.length == 0) {
+            return 0L;
+        }
+        int index = (int) Math.ceil(percentile * sortedSamples.length) - 1;
+        index = Math.max(0, Math.min(index, sortedSamples.length - 1));
+        return sortedSamples[index];
     }
 }
