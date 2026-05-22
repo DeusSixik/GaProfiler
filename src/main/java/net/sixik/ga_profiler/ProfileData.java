@@ -1,66 +1,90 @@
 package net.sixik.ga_profiler;
 
-import java.util.concurrent.atomic.LongAccumulator;
-import java.util.concurrent.atomic.LongAdder;
-
-public class ProfileData {
-    private final String name;
-    private String tooltip;
-
-    private final LongAccumulator min = new LongAccumulator(Math::min, Long.MAX_VALUE);
-    private final LongAccumulator max = new LongAccumulator(Math::max, Long.MIN_VALUE);
-    private final LongAdder total = new LongAdder();
-    private final LongAdder count = new LongAdder();
-
-    public ProfileData(String name) {
-        this.name = name;
+public final class ProfileData {
+    private ProfileData() {
     }
 
-    public void addSample(long durationNs) {
-        min.accumulate(durationNs);
-        max.accumulate(durationNs);
-        total.add(durationNs);
-        count.increment();
+    public enum MetricAvailability {
+        COLLECTED,
+        DISABLED,
+        NOT_SUPPORTED
     }
 
-    public String getName() {
-        return name;
-    }
+    public static final class MetricStats {
+        private static final MetricStats EMPTY = new MetricStats(0L, 0L, 0L, 0L, 0L, 0L);
 
-    public String getTooltip() {
-        return tooltip;
-    }
+        private final long min;
+        private final long median;
+        private final long max;
+        private final long p95;
+        private final long total;
+        private final long count;
 
-    public void setTooltip(String tooltip) {
-        this.tooltip = tooltip;
-    }
+        public MetricStats(long min, long max, long total, long count) {
+            this(min, Math.round(count == 0L ? 0.0 : (double) total / count), max, max, total, count);
+        }
 
-    public Snapshot takeSnapshot() {
-        return new Snapshot(
-                name,
-                tooltip,
-                min.get() == Long.MAX_VALUE ? 0 : min.get(),
-                max.get() == Long.MIN_VALUE ? 0 : max.get(),
-                total.sum(),
-                count.intValue()
-        );
-    }
-
-    public static class Snapshot {
-        public String name;
-        public String tooltip;
-        public long min;
-        public long max;
-        public long total;
-        public int count;
-
-        public Snapshot(String name, String tooltip, long min, long max, long total, int count) {
-            this.name = name;
-            this.tooltip = tooltip;
+        public MetricStats(long min, long median, long max, long p95, long total, long count) {
             this.min = min;
+            this.median = median;
             this.max = max;
+            this.p95 = p95;
             this.total = total;
             this.count = count;
+        }
+
+        public static MetricStats empty() {
+            return EMPTY;
+        }
+
+        public long getMin() {
+            return min;
+        }
+
+        public long getMedian() {
+            return median;
+        }
+
+        public long getMax() {
+            return max;
+        }
+
+        public long getP95() {
+            return p95;
+        }
+
+        public long getTotal() {
+            return total;
+        }
+
+        public long getCount() {
+            return count;
+        }
+
+        public double getAvg() {
+            return count == 0L ? 0.0 : (double) total / count;
+        }
+    }
+
+    public static final class Snapshot {
+        private final String name;
+        private final String tooltip;
+        private final MetricStats executionTime;
+        private final MetricStats memoryAllocation;
+        private final MetricAvailability memoryAllocationAvailability;
+
+        public Snapshot(
+                String name,
+                String tooltip,
+                MetricStats executionTime,
+                MetricStats memoryAllocation,
+                MetricAvailability memoryAllocationAvailability
+        ) {
+            this.name = name;
+            this.tooltip = tooltip;
+            this.executionTime = executionTime;
+            this.memoryAllocation = memoryAllocation;
+            this.memoryAllocationAvailability = memoryAllocationAvailability;
         }
 
         public String getName() {
@@ -71,24 +95,37 @@ public class ProfileData {
             return tooltip;
         }
 
+        public MetricStats getExecutionTime() {
+            return executionTime;
+        }
+
+        public MetricStats getMemoryAllocation() {
+            return memoryAllocation;
+        }
+
+        public MetricAvailability getMemoryAllocationAvailability() {
+            return memoryAllocationAvailability;
+        }
+
+        // Backward-compatible execution-time accessors.
         public long getMin() {
-            return min;
+            return executionTime.getMin();
         }
 
         public long getMax() {
-            return max;
+            return executionTime.getMax();
         }
 
         public long getTotal() {
-            return total;
+            return executionTime.getTotal();
         }
 
-        public int getCount() {
-            return count;
+        public long getCount() {
+            return executionTime.getCount();
         }
 
         public double getAvg() {
-            return count == 0 ? 0 : (double) total / count;
+            return executionTime.getAvg();
         }
     }
 }

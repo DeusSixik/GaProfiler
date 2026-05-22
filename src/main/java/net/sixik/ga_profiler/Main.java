@@ -1,80 +1,108 @@
 package net.sixik.ga_profiler;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
 
 public class Main {
     public static void main(String[] args) throws InterruptedException {
         Random random = new Random();
+        Profiler.configureDefaultSampleLimit(5_000);
+        Profiler.setDisplayUnit(Profiler.TimeUnit.MILLISECONDS);
+        Profiler.setAllocationProfilingEnabled(true);
 
-        // --- СИМУЛЯЦИЯ ВЕРСИИ 1.0 ---
+        Profiler.Section renderScene = Profiler.register(
+                "render.scene",
+                "Main full-scene rendering pass",
+                0
+        );
+        Profiler.Section physicsUpdate = Profiler.register(
+                "physics.update",
+                "Physics simulation and collision processing",
+                0
+        );
+        Profiler.Section uiRender = Profiler.register(
+                "ui.render",
+                "User interface rendering and font drawing",
+                0
+        );
+
         System.out.println("Running Version 1.0...");
-        runProfiling(random, 1.0);
+        runProfiling(random, 1.0, renderScene, physicsUpdate, uiRender);
         Profiler.dump("v1_0.dump");
         Profiler.reset();
 
-        // --- СИМУЛЯЦИЯ ВЕРСИИ 1.1 (ОПТИМИЗИРОВАННАЯ) ---
         System.out.println("Running Version 1.1 (Optimized)...");
-        runProfiling(random, 0.8); // 20% быстрее
+        runProfiling(random, 0.8, renderScene, physicsUpdate, uiRender);
         Profiler.dump("v1_1.dump");
         Profiler.reset();
 
-        // --- ГЕНЕРАЦИЯ ОТЧЕТОВ ---
         System.out.println("Generating reports...");
 
         List<String> specs = Arrays.asList(
-                "Ryzen Threadripper 1950x",
+                "Ryzen Threadripper 1950X",
                 "RTX 5070",
-                "RAM 64 gb: Gived 10 gb",
-                "SSD M2"
+                "RAM 64 GB (10 GB assigned)",
+                "NVMe SSD"
         );
-        
-        // Одиночный отчет для версии 1.1
+
         HtmlReporter.generate("performance_report.html", Profiler.load("v1_1.dump"), specs);
-        
-        // Сравнительный отчет
+
         Map<String, Collection<ProfileData.Snapshot>> comparisonMap = new LinkedHashMap<>();
         comparisonMap.put("Version 1.0 (Baseline)", Profiler.load("v1_0.dump"));
         comparisonMap.put("Version 1.1 (Target)", Profiler.load("v1_1.dump"));
-        
-        // Можно добавить еще одну "загруженную" версию для теста
-        comparisonMap.put("Competitor Engine", generateFakeData(random));
+        comparisonMap.put("Competitor Engine", generateFakeData(random, renderScene, physicsUpdate));
 
         HtmlReporter.generateComparison("comparison_report.html", comparisonMap, specs);
         System.out.println("Comparison report generated: comparison_report.html");
     }
 
-    private static void runProfiling(Random random, double multiplier) throws InterruptedException {
-        Profiler.setTooltip("render.scene", "Главный проход отрисовки всей сцены (Full Scene Render)");
-        Profiler.setTooltip("physics.update", "Симуляция физики и обработка коллизий (Physics Engine)");
-        Profiler.setTooltip("ui.render", "Отрисовка пользовательского интерфейса и шрифтов");
-
+    private static void runProfiling(
+            Random random,
+            double multiplier,
+            Profiler.Section renderScene,
+            Profiler.Section physicsUpdate,
+            Profiler.Section uiRender
+    ) throws InterruptedException {
         for (int i = 0; i < 50; i++) {
-            try (Profiler.ProfileScope scene = Profiler.scope("render.scene")) {
+            try (Profiler.ProfileScope scene = Profiler.scope(renderScene)) {
+
                 Thread.sleep((long) (random.nextInt(10, 20) * multiplier));
+                Pos[] newArray = new Pos[(int) (512 * (multiplier * 500))];
+                for (int i1 = 0; i1 < newArray.length; i1++) {
+                    newArray[i1] = new Pos(random.nextInt(), random.nextInt(), random.nextInt());
+                }
             }
 
-            try (Profiler.ProfileScope physics = Profiler.scope("physics.update")) {
+            try (Profiler.ProfileScope physics = Profiler.scope(physicsUpdate)) {
                 Thread.sleep((long) (random.nextInt(5, 10) * multiplier));
             }
 
-            try (Profiler.ProfileScope ui = Profiler.scope("ui.render")) {
+            try (Profiler.ProfileScope ui = Profiler.scope(uiRender)) {
                 Thread.sleep((long) (random.nextInt(1, 3) * multiplier));
             }
         }
     }
 
-    private static Collection<ProfileData.Snapshot> generateFakeData(Random random) {
+    private static Collection<ProfileData.Snapshot> generateFakeData(
+            Random random,
+            Profiler.Section renderScene,
+            Profiler.Section physicsUpdate
+    ) {
         Profiler.reset();
-        Profiler.setTooltip("render.scene", "Данные стороннего движка для сравнения");
-        Profiler.setTooltip("physics.update", "Физика стороннего движка");
-        
+
         for (int i = 0; i < 50; i++) {
             long durationScene = (long) (random.nextInt(15, 25) * 1_000_000L);
-            Profiler.addSample("render.scene", durationScene);
-            
+            Profiler.addSample(renderScene, durationScene);
+
             long durationPhysics = (long) (random.nextInt(8, 12) * 1_000_000L);
-            Profiler.addSample("physics.update", durationPhysics);
+            Profiler.addSample(physicsUpdate, durationPhysics);
         }
         return Profiler.getData();
     }
+
+    public record Pos(int x, int y, int z) {};
 }
