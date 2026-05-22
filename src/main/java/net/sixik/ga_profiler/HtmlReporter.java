@@ -3,16 +3,216 @@ package net.sixik.ga_profiler;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 
 public class HtmlReporter {
     public static void generate(String filePath, Collection<ProfileData.Snapshot> data, List<String> specs) {
-        String unitLabel = Profiler.getDisplayUnit().label();
         StringBuilder html = new StringBuilder();
+        appendDocumentStart(html, "GaProfiler Performance Dashboard");
+        appendHeader(html, "GaProfiler", specs);
+        appendModeControls(html);
+        html.append("        <div class=\"card\"><div id=\"chart\"></div></div>\n");
+        html.append("        <div class=\"card\" style=\"padding: 0; overflow: hidden;\">\n");
+        html.append("            <table>\n");
+        html.append("                <thead id=\"table-head\"></thead>\n");
+        html.append("                <tbody id=\"table-body\"></tbody>\n");
+        html.append("            </table>\n");
+        html.append("        </div>\n");
+        html.append("        <div class=\"hint\">Switch between Code Execution Time and Code Memory Allocation to compare the same sections from different angles.</div>\n");
+        html.append("    </div>\n");
+        html.append("    <script>\n");
+        appendModeScriptData(html);
+        appendSpecsScriptData(html, specs);
+        appendSingleReportData(html, data);
+        appendSharedScriptHelpers(html);
+        html.append("        let currentMode = '" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "';\n");
+        html.append("        let selectedSection = null;\n");
+        html.append("        let chart = null;\n");
+        html.append("        function renderTable() {\n");
+        html.append("            const mode = reportModes[currentMode];\n");
+        html.append("            const head = document.getElementById('table-head');\n");
+        html.append("            head.innerHTML = '<tr><th>Section Name</th>' + mode.columns.map(c => '<th>' + c + '</th>').join('') + '</tr>';\n");
+        html.append("            const body = document.getElementById('table-body');\n");
+        html.append("            body.innerHTML = sections.map((section, index) => renderSingleRow(section, index)).join('');\n");
+        html.append("            if (!selectedSection && sections.length > 0) { selectedSection = sections[0].name; }\n");
+        html.append("            highlightSelectedRow();\n");
+        html.append("            if (window.tippy) { tippy('[data-tippy-content]', { theme: 'material' }); }\n");
+        html.append("        }\n");
+        html.append("        function renderSingleRow(section, index) {\n");
+        html.append("            const metric = section[currentMode];\n");
+        html.append("            const tooltipAttr = section.tooltip ? ' data-tippy-content=\"' + escapeHtml(section.tooltip) + '\" style=\"font-weight: 600; color: #10b981; border-bottom: 1px dashed #334155;\"' : ' style=\"font-weight: 600; color: #10b981;\"';\n");
+        html.append("            let cells = '<td' + tooltipAttr + '>' + escapeHtml(section.name) + '</td>';\n");
+        html.append("            if (metric.supported) {\n");
+        html.append("                cells += '<td>' + metric.count + '</td>';\n");
+        html.append("                cells += '<td class=\"val\">' + formatMetricValue(metric.min, currentMode) + '</td>';\n");
+        html.append("                cells += '<td class=\"val\" style=\"color: #f59e0b;\">' + formatMetricValue(metric.avg, currentMode) + '</td>';\n");
+        html.append("                cells += '<td class=\"val\">' + formatMetricValue(metric.max, currentMode) + '</td>';\n");
+        html.append("                cells += '<td class=\"val\">' + formatMetricValue(metric.total, currentMode) + '</td>';\n");
+        html.append("            } else {\n");
+        html.append("                cells += '<td class=\"val\">' + metric.unavailable + '</td>'.repeat(5);\n");
+        html.append("            }\n");
+        html.append("            return '<tr id=\"row-' + index + '\" onclick=\"selectSectionByIndex(' + index + ')\">' + cells + '</tr>';\n");
+        html.append("        }\n");
+        html.append("        function selectSectionByIndex(index) { const section = sections[index]; if (!section) { return; } selectedSection = section.name; highlightSelectedRow(); renderSingleChart(); }\n");
+        html.append("        function highlightSelectedRow() {\n");
+        html.append("            document.querySelectorAll('#table-body tr').forEach(row => row.classList.remove('selected'));\n");
+        html.append("            const index = sections.findIndex(section => section.name === selectedSection);\n");
+        html.append("            if (index >= 0) { const row = document.getElementById('row-' + index); if (row) { row.classList.add('selected'); } }\n");
+        html.append("        }\n");
+        html.append("        function renderSingleChart() {\n");
+        html.append("            const section = sections.find(item => item.name === selectedSection);\n");
+        html.append("            if (!section) { return; }\n");
+        html.append("            document.getElementById('current-section-name').innerText = section.name;\n");
+        html.append("            const mode = reportModes[currentMode];\n");
+        html.append("            const metric = section[currentMode];\n");
+        html.append("            const options = buildBaseChartOptions(mode, section.tooltip || '');\n");
+        html.append("            options.title.text = section.name;\n");
+        html.append("            if (metric.supported) {\n");
+        html.append("                options.series = [{ name: mode.label, data: [metric.min, metric.avg, metric.max] }];\n");
+        html.append("                options.xaxis.categories = ['Min', 'Avg', 'Max'];\n");
+        html.append("                options.yaxis = { title: { text: mode.axisLabel, style: { color: '#94a3b8', fontWeight: 500 } }, labels: { style: { colors: '#94a3b8' }, formatter: (v) => formatMetricValue(v, currentMode) } };\n");
+        html.append("                options.dataLabels = { enabled: true, formatter: (val) => formatMetricValue(val, currentMode), offsetY: -28, style: { fontSize: '11px', colors: ['#f8fafc'], fontFamily: 'JetBrains Mono' } };\n");
+        html.append("                options.tooltip = { theme: 'dark', y: { formatter: (v) => formatMetricValue(v, currentMode) } };\n");
+        html.append("            } else {\n");
+        html.append("                options.series = [];\n");
+        html.append("                options.noData = { text: metric.unavailable, align: 'center', verticalAlign: 'middle', style: { color: '#f8fafc' } };\n");
+        html.append("            }\n");
+        html.append("            renderChart(options);\n");
+        html.append("        }\n");
+        html.append("        function setMode(modeKey) {\n");
+        html.append("            currentMode = modeKey;\n");
+        html.append("            document.querySelectorAll('.mode-button').forEach(button => button.classList.remove('active'));\n");
+        html.append("            document.getElementById('mode-' + modeKey).classList.add('active');\n");
+        html.append("            renderTable();\n");
+        html.append("            renderSingleChart();\n");
+        html.append("        }\n");
+        html.append("        window.onload = () => { setMode('" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "'); };\n");
+        html.append("    </script>\n");
+        html.append("</body>\n</html>");
+        writeHtml(filePath, html.toString(), "HTML report");
+    }
+
+    public static void generateComparison(String filePath, Map<String, Collection<ProfileData.Snapshot>> datasets, List<String> specs) {
+        StringBuilder html = new StringBuilder();
+        appendDocumentStart(html, "GaProfiler Comparison Dashboard");
+        appendHeader(html, "GaProfiler Comparison", specs);
+        appendModeControls(html);
+        appendComparisonSortControls(html);
+        html.append("        <div class=\"card\"><div id=\"chart\"></div></div>\n");
+        html.append("        <div class=\"card\" style=\"padding: 0; overflow: hidden;\">\n");
+        html.append("            <table>\n");
+        html.append("                <thead id=\"table-head\"></thead>\n");
+        html.append("                <tbody id=\"table-body\"></tbody>\n");
+        html.append("            </table>\n");
+        html.append("        </div>\n");
+        html.append("        <div class=\"hint\">Compare each section by runtime cost or allocation pressure across multiple runs.</div>\n");
+        html.append("    </div>\n");
+        html.append("    <script>\n");
+        appendModeScriptData(html);
+        appendSpecsScriptData(html, specs);
+        appendComparisonData(html, datasets);
+        appendSharedScriptHelpers(html);
+        html.append("        let currentMode = '" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "';\n");
+        html.append("        let selectedSection = null;\n");
+        html.append("        let currentGroupSort = 'none';\n");
+        html.append("        let currentSortDirection = 'asc';\n");
+        html.append("        let chart = null;\n");
+        html.append("        function renderTable() {\n");
+        html.append("            const mode = reportModes[currentMode];\n");
+            html.append("            const head = document.getElementById('table-head');\n");
+        html.append("            head.innerHTML = '<tr><th>Section Name</th><th>Available in Runs</th><th>Best Avg</th></tr>';\n");
+        html.append("            const body = document.getElementById('table-body');\n");
+        html.append("            body.innerHTML = comparisonSections.map((section, index) => renderComparisonRow(section, index)).join('');\n");
+        html.append("            if (!selectedSection && comparisonSections.length > 0) { selectedSection = comparisonSections[0].name; }\n");
+        html.append("            highlightSelectedRow();\n");
+        html.append("            if (window.tippy) { tippy('[data-tippy-content]', { theme: 'material' }); }\n");
+        html.append("        }\n");
+        html.append("        function renderComparisonRow(section, index) {\n");
+        html.append("            const supportedRuns = section.runs.filter(run => run[currentMode].supported);\n");
+        html.append("            const metricKey = currentGroupSort === 'none' ? 'avg' : currentGroupSort;\n");
+        html.append("            const bestAvg = supportedRuns.length > 0 ? Math.min(...supportedRuns.map(run => run[currentMode][metricKey])) : null;\n");
+        html.append("            const tooltipAttr = section.tooltip ? ' data-tippy-content=\"' + escapeHtml(section.tooltip) + '\" style=\"font-weight: 600; color: #10b981; border-bottom: 1px dashed #334155;\"' : ' style=\"font-weight: 600; color: #10b981;\"';\n");
+        html.append("            const bestAvgText = bestAvg === null ? unavailableFromRuns(section.runs) : formatMetricValue(bestAvg, currentMode);\n");
+        html.append("            return '<tr id=\"row-' + index + '\" onclick=\"selectComparisonSectionByIndex(' + index + ')\">' +\n");
+        html.append("                '<td' + tooltipAttr + '>' + escapeHtml(section.name) + '</td>' +\n");
+        html.append("                '<td>' + supportedRuns.length + ' / ' + section.runs.length + '</td>' +\n");
+        html.append("                '<td class=\"val\">' + bestAvgText + '</td>' +\n");
+        html.append("                '</tr>';\n");
+        html.append("        }\n");
+        html.append("        function selectComparisonSectionByIndex(index) { const section = comparisonSections[index]; if (!section) { return; } selectedSection = section.name; highlightSelectedRow(); renderComparisonChart(); }\n");
+        html.append("        function highlightSelectedRow() {\n");
+        html.append("            document.querySelectorAll('#table-body tr').forEach(row => row.classList.remove('selected'));\n");
+        html.append("            const index = comparisonSections.findIndex(section => section.name === selectedSection);\n");
+        html.append("            if (index >= 0) { const row = document.getElementById('row-' + index); if (row) { row.classList.add('selected'); } }\n");
+        html.append("        }\n");
+        html.append("        function renderComparisonChart() {\n");
+        html.append("            const section = comparisonSections.find(item => item.name === selectedSection);\n");
+        html.append("            if (!section) { return; }\n");
+        html.append("            document.getElementById('current-section-name').innerText = section.name;\n");
+        html.append("            const mode = reportModes[currentMode];\n");
+        html.append("            const supportedRuns = section.runs.filter(run => run[currentMode].supported).slice();\n");
+        html.append("            if (currentGroupSort !== 'none') {\n");
+        html.append("                supportedRuns.sort((left, right) => {\n");
+        html.append("                    const delta = left[currentMode][currentGroupSort] - right[currentMode][currentGroupSort];\n");
+        html.append("                    return currentSortDirection === 'asc' ? delta : -delta;\n");
+        html.append("                });\n");
+        html.append("            }\n");
+        html.append("            const options = buildBaseChartOptions(mode, section.tooltip || '');\n");
+        html.append("            options.title.text = section.name;\n");
+        html.append("            if (supportedRuns.length > 0) {\n");
+        html.append("                options.series = supportedRuns.map(run => ({ name: run.label, data: [run[currentMode].min, run[currentMode].avg, run[currentMode].max] }));\n");
+        html.append("                options.xaxis.categories = ['Min', 'Avg', 'Max'];\n");
+        html.append("                options.yaxis = { title: { text: mode.axisLabel, style: { color: '#94a3b8' } }, labels: { style: { colors: '#94a3b8' }, formatter: (v) => formatMetricValue(v, currentMode) } };\n");
+        html.append("                options.dataLabels = { enabled: true, formatter: (val) => formatMetricValue(val, currentMode), offsetY: -28, style: { fontSize: '10px', colors: ['#f8fafc'] } };\n");
+        html.append("                options.tooltip = { theme: 'dark', y: { formatter: (v) => formatMetricValue(v, currentMode) } };\n");
+        html.append("            } else {\n");
+        html.append("                options.series = [];\n");
+        html.append("                options.noData = { text: unavailableFromRuns(section.runs), align: 'center', verticalAlign: 'middle', style: { color: '#f8fafc' } };\n");
+        html.append("            }\n");
+        html.append("            renderChart(options);\n");
+        html.append("        }\n");
+        html.append("        function unavailableFromRuns(runs) {\n");
+        html.append("            const unsupported = runs.find(run => run[currentMode].unavailable === 'Not Supported');\n");
+        html.append("            if (unsupported) { return 'Not Supported'; }\n");
+        html.append("            const disabled = runs.find(run => run[currentMode].unavailable === 'Disabled');\n");
+        html.append("            return disabled ? 'Disabled' : 'Unavailable';\n");
+        html.append("        }\n");
+        html.append("        function setMode(modeKey) {\n");
+        html.append("            currentMode = modeKey;\n");
+        html.append("            document.querySelectorAll('.mode-button').forEach(button => button.classList.remove('active'));\n");
+        html.append("            document.getElementById('mode-' + modeKey).classList.add('active');\n");
+        html.append("            renderTable();\n");
+        html.append("            renderComparisonChart();\n");
+        html.append("        }\n");
+        html.append("        function setGroupSort(metric) {\n");
+        html.append("            currentGroupSort = metric;\n");
+        html.append("            document.querySelectorAll('.group-sort-button').forEach(button => button.classList.remove('active'));\n");
+        html.append("            document.getElementById('group-sort-' + metric).classList.add('active');\n");
+        html.append("            renderTable();\n");
+        html.append("            renderComparisonChart();\n");
+        html.append("        }\n");
+        html.append("        function setSortDirection(direction) {\n");
+        html.append("            currentSortDirection = direction;\n");
+        html.append("            document.querySelectorAll('.group-direction-button').forEach(button => button.classList.remove('active'));\n");
+        html.append("            document.getElementById('group-direction-' + direction).classList.add('active');\n");
+        html.append("            renderComparisonChart();\n");
+        html.append("        }\n");
+        html.append("        window.onload = () => { setMode('" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "'); setGroupSort('none'); setSortDirection('asc'); };\n");
+        html.append("    </script>\n");
+        html.append("</body>\n</html>");
+        writeHtml(filePath, html.toString(), "HTML comparison report");
+    }
+
+    private static void appendDocumentStart(StringBuilder html, String title) {
         html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         html.append("    <meta charset=\"UTF-8\">\n");
-        html.append("    <title>GaProfiler Performance Dashboard</title>\n");
+        html.append("    <title>").append(title).append("</title>\n");
         html.append("    <script src=\"https://cdn.jsdelivr.net/npm/apexcharts\"></script>\n");
         html.append("    <link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono&display=swap\" rel=\"stylesheet\">\n");
         html.append("    <script src=\"https://unpkg.com/@popperjs/core@2\"></script>\n");
@@ -20,10 +220,9 @@ public class HtmlReporter {
         html.append("    <style>\n");
         html.append("        body { background: #0f172a; color: #f8fafc; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }\n");
         html.append("        .container { max-width: 1200px; margin: 0 auto; }\n");
-        html.append("        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 20px; }\n");
+        html.append("        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; border-bottom: 1px solid #334155; padding-bottom: 20px; }\n");
         html.append("        h1 { color: #38bdf8; margin: 0; font-weight: 600; font-size: 28px; }\n");
         html.append("        .card { background: #1e293b; border-radius: 12px; padding: 24px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); border: 1px solid #334155; margin-bottom: 24px; }\n");
-        html.append("        #chart-container { height: 400px; }\n");
         html.append("        table { width: 100%; border-collapse: collapse; }\n");
         html.append("        th { text-align: left; padding: 12px 16px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }\n");
         html.append("        td { padding: 14px 16px; border-bottom: 1px solid #334155; cursor: pointer; transition: all 0.2s; }\n");
@@ -37,478 +236,232 @@ public class HtmlReporter {
         html.append("        .header-right { display: flex; align-items: center; gap: 20px; }\n");
         html.append("        .hint { color: #64748b; font-size: 14px; text-align: center; margin-top: 10px; }\n");
         html.append("        #current-section-name { color: #38bdf8; font-weight: 600; font-size: 18px; }\n");
-        html.append("        .apexcharts-menu {\n");
-        html.append("            background: #1e293b !important;\n");
-        html.append("            border-color: #334155 !important;\n");
-        html.append("            color: #f8fafc !important;\n");
-        html.append("        }\n");
-        html.append("        .apexcharts-menu-item:hover {\n");
-        html.append("            background: #334155 !important;\n");
-        html.append("        }\n");
-        html.append("        .apexcharts-toolbar svg {\n");
-        html.append("            fill: #94a3b8 !important;\n");
-        html.append("        }\n");
+        html.append("        .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }\n");
+        html.append("        .mode-button { background: #334155; color: #f8fafc; border: none; padding: 8px 16px; border-radius: 999px; cursor: pointer; font-size: 14px; transition: background 0.2s; }\n");
+        html.append("        .mode-button:hover { background: #475569; }\n");
+        html.append("        .mode-button.active { background: #0ea5e9; }\n");
         html.append("    </style>\n");
         html.append("</head>\n<body>\n");
         html.append("    <div class=\"container\">\n");
-        html.append("        <div class=\"header\">\n");
-        html.append("            <div class=\"header-left\">\n");
-        html.append("                <h1>GaProfiler</h1>\n");
-        html.append("                <div id=\"current-section-name\">Select a section</div>\n");
-        html.append("            </div>\n");
-        html.append("            <div class=\"header-right\">\n");
-        html.append("                <ul class=\"specs-list\">\n");
-        for (String spec : specs) {
-            html.append("                    <li class=\"spec-item\">").append(spec).append("</li>\n");
-        }
-        html.append("                </ul>\n");
-        html.append("            </div>\n");
-        html.append("        </div>\n");
-        html.append("        \n");
-        html.append("        <div class=\"card\">\n");
-        html.append("            <div id=\"chart\"></div>\n");
-        html.append("        </div>\n");
-        html.append("        \n");
-        html.append("        <div class=\"card\" style=\"padding: 0; overflow: hidden;\">\n");
-        html.append("            <table>\n");
-        html.append("                <thead>\n");
-        html.append("                    <tr>\n");
-        html.append("                        <th>Section Name</th>\n");
-        html.append("                        <th>Calls</th>\n");
-        html.append("                        <th>Min (").append(unitLabel).append(")</th>\n");
-        html.append("                        <th>Avg (").append(unitLabel).append(")</th>\n");
-        html.append("                        <th>Max (").append(unitLabel).append(")</th>\n");
-        html.append("                        <th>Total (").append(unitLabel).append(")</th>\n");
-        html.append("                    </tr>\n");
-        html.append("                </thead>\n");
-        html.append("                <tbody id=\"table-body\">\n");
-
-        int idx = 0;
-        for (ProfileData.Snapshot d : data) {
-            double minValue = Profiler.getDisplayUnit().convertFromNanos(d.getMin());
-            double avgValue = Profiler.getDisplayUnit().convertFromNanos(Math.round(d.getAvg()));
-            double maxValue = Profiler.getDisplayUnit().convertFromNanos(d.getMax());
-            double totalValue = Profiler.getDisplayUnit().convertFromNanos(d.getTotal());
-
-            String escapedTooltip = d.getTooltip() == null ? "" : d.getTooltip().replace("'", "\\'");
-            html.append(String.format(Locale.US,
-                "                    <tr onclick=\"updateChart('%s', %.6f, %.6f, %.6f, '%s', this)\" id=\"row-%d\">\n",
-                d.getName(), minValue, avgValue, maxValue, escapedTooltip, idx++
-            ));
-            
-            String tooltipAttr = (d.getTooltip() != null && !d.getTooltip().isEmpty()) 
-                ? String.format(" data-tippy-content=\"%s\" style=\"font-weight: 600; color: #10b981; border-bottom: 1px dashed #334155;\"", d.getTooltip())
-                : " style=\"font-weight: 600; color: #10b981;\"";
-
-            html.append("                        <td").append(tooltipAttr).append(">").append(d.getName()).append("</td>\n");
-            html.append("                        <td>").append(d.getCount()).append("</td>\n");
-            html.append(String.format(Locale.US, "                        <td class=\"val\">%.4f</td>\n", minValue));
-            html.append(String.format(Locale.US, "                        <td class=\"val\" style=\"color: #f59e0b;\">%.4f</td>\n", avgValue));
-            html.append(String.format(Locale.US, "                        <td class=\"val\">%.4f</td>\n", maxValue));
-            html.append(String.format(Locale.US, "                        <td class=\"val\">%.2f</td>\n", totalValue));
-            html.append("                    </tr>\n");
-        }
-
-        html.append("                </tbody>\n");
-        html.append("            </table>\n");
-        html.append("        </div>\n");
-        html.append("        <div class=\"hint\">Click on any row to visualize performance columns</div>\n");
-        html.append("    </div>\n");
-        
-        html.append("    <script>\n");
-        html.append("        let chart = null;\n");
-        html.append("        const unitLabel = '").append(unitLabel).append("';\n");
-        html.append("        const chartSpecs = [");
-        for (int i = 0; i < specs.size(); i++) {
-            html.append("'").append(specs.get(i).replace("'", "\\'")).append("'");
-            if (i < specs.size() - 1) html.append(", ");
-        }
-        html.append("];\n");
-        html.append("        \n");
-        html.append("        function updateChart(name, min, avg, max, tooltip, rowElement) {\n");
-        html.append("            document.getElementById('current-section-name').innerText = name;\n");
-        html.append("            \n");
-        html.append("            // Highlight selected row\n");
-        html.append("            document.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));\n");
-        html.append("            if (rowElement) rowElement.classList.add('selected');\n");
-        html.append("            \n");
-        html.append("            const options = {\n");
-        html.append("                title: { text: name, align: 'left', style: { color: '#38bdf8', fontSize: '20px' }, offsetY: 0 },\n");
-        html.append("                subtitle: { text: tooltip || '', align: 'left', style: { color: '#94a3b8', fontSize: '14px' }, offsetY: 25 },\n");
-        html.append("                annotations: {\n");
-        html.append("                    texts: [{\n");
-        html.append("                        x: '98%', y: 15, text: chartSpecs, textAnchor: 'end',\n");
-        html.append("                        style: { fontSize: '11px', fontFamily: 'Inter', color: '#f8fafc' }\n");
-        html.append("                    }]\n");
-        html.append("                },\n");
-        html.append("                series: [{\n");
-        html.append("                    name: 'Duration',\n");
-        html.append("                    data: [\n");
-        html.append("                        { x: 'Min', y: parseFloat(min.toFixed(6)) },\n");
-        html.append("                        { x: 'Avg', y: parseFloat(avg.toFixed(6)) },\n");
-        html.append("                        { x: 'Max', y: parseFloat(max.toFixed(6)) }\n");
-        html.append("                    ]\n");
-        html.append("                }],\n");
-        html.append("                chart: {\n");
-        html.append("                    type: 'bar',\n");
-        html.append("                    height: 350,\n");
-        html.append("                    toolbar: { \n");
-        html.append("                        show: true, \n");
-        html.append("                        tools: { download: true, selection: false, zoom: false, zoomin: false, zoomout: false, pan: false, reset: false }\n");
-        html.append("                    },\n");
-        html.append("                    background: '#1e293b',\n");
-        html.append("                    animations: { enabled: true, easing: 'easeinout', speed: 400 }\n");
-        html.append("                },\n");
-        html.append("                colors: ['#10b981', '#f59e0b', '#ef4444'],\n");
-        html.append("                plotOptions: {\n");
-        html.append("                    bar: {\n");
-        html.append("                        columnWidth: '50%',\n");
-        html.append("                        distributed: true,\n");
-        html.append("                        borderRadius: 6,\n");
-        html.append("                        dataLabels: { position: 'top' }\n");
-        html.append("                    }\n");
-        html.append("                },\n");
-        html.append("                dataLabels: {\n");
-        html.append("                    enabled: true,\n");
-        html.append("                    formatter: (val) => val.toFixed(4) + ' ' + unitLabel,\n");
-        html.append("                    offsetY: -30,\n");
-        html.append("                    style: { fontSize: '12px', colors: ['#f8fafc'], fontFamily: 'JetBrains Mono' }\n");
-        html.append("                },\n");
-        html.append("                xaxis: {\n");
-        html.append("                    title: { text: 'GA Profiler', style: { color: '#475569', fontSize: '10px' } },\n");
-        html.append("                    categories: ['Min (Fastest)', 'Average', 'Max (Slowest)'],\n");
-        html.append("                    labels: { style: { colors: '#94a3b8', fontSize: '12px' } },\n");
-        html.append("                    axisBorder: { show: false },\n");
-        html.append("                    axisTicks: { show: false }\n");
-        html.append("                },\n");
-        html.append("                yaxis: {\n");
-        html.append("                    title: { text: 'Time (' + unitLabel + ')', style: { color: '#94a3b8', fontWeight: 500 } },\n");
-        html.append("                    labels: { style: { colors: '#94a3b8' }, formatter: (v) => v.toFixed(2) }\n");
-        html.append("                },\n");
-        html.append("                tooltip: { theme: 'dark', y: { formatter: (v) => v.toFixed(6) + ' ' + unitLabel } },\n");
-        html.append("                grid: { borderColor: '#334155', strokeDashArray: 4, padding: { top: 40 } },\n");
-        html.append("                theme: { mode: 'dark' },\n");
-        html.append("                legend: { show: true, position: 'top', horizontalAlign: 'center', offsetY: 0, labels: { colors: '#f8fafc' } }\n");
-        html.append("            };\n");
-        html.append("            \n");
-        html.append("            const chartDiv = document.querySelector(\"#chart\");\n");
-        html.append("            if (chart) {\n");
-        html.append("                chart.updateOptions(options);\n");
-        html.append("            } else {\n");
-        html.append("                chart = new ApexCharts(chartDiv, options);\n");
-        html.append("                chart.render();\n");
-        html.append("            }\n");
-        html.append("        }\n");
-        html.append("        \n");
-        html.append("        window.onload = () => {\n");
-        html.append("            const firstRow = document.querySelector('#table-body tr');\n");
-        html.append("            if (firstRow) firstRow.click();\n");
-        html.append("            tippy('[data-tippy-content]', { theme: 'material' });\n");
-        html.append("        };\n");
-        html.append("    </script>\n");
-        html.append("</body>\n</html>");
-
-        try (FileWriter writer = new FileWriter(filePath, StandardCharsets.UTF_8)) {
-            writer.write(html.toString());
-        } catch (IOException e) {
-            System.err.println("Failed to write HTML report: " + e.getMessage());
-        }
     }
 
-    public static void generateComparison(String filePath, Map<String, Collection<ProfileData.Snapshot>> datasets, List<String> specs) {
-        String unitLabel = Profiler.getDisplayUnit().label();
-        StringBuilder html = new StringBuilder();
-        html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
-        html.append("    <meta charset=\"UTF-8\">\n");
-        html.append("    <title>GaProfiler Comparison Dashboard</title>\n");
-        html.append("    <script src=\"https://cdn.jsdelivr.net/npm/apexcharts\"></script>\n");
-        html.append("    <link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono&display=swap\" rel=\"stylesheet\">\n");
-        html.append("    <script src=\"https://unpkg.com/@popperjs/core@2\"></script>\n");
-        html.append("    <script src=\"https://unpkg.com/tippy.js@6\"></script>\n");
-        html.append("    <style>\n");
-        html.append("        body { background: #0f172a; color: #f8fafc; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }\n");
-        html.append("        .container { max-width: 1200px; margin: 0 auto; }\n");
-        html.append("        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 20px; }\n");
-        html.append("        h1 { color: #38bdf8; margin: 0; font-weight: 600; font-size: 28px; }\n");
-        html.append("        .card { background: #1e293b; border-radius: 12px; padding: 24px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); border: 1px solid #334155; margin-bottom: 24px; }\n");
-        html.append("        .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }\n");
-        html.append("        button { background: #334155; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.2s; }\n");
-        html.append("        button:hover { background: #475569; }\n");
-        html.append("        button.active { background: #0ea5e9; }\n");
-        html.append("        table { width: 100%; border-collapse: collapse; }\n");
-        html.append("        th { text-align: left; padding: 12px 16px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }\n");
-        html.append("        td { padding: 14px 16px; border-bottom: 1px solid #334155; cursor: pointer; transition: all 0.2s; }\n");
-        html.append("        tr:hover td { background: #1e293b; color: #38bdf8; }\n");
-        html.append("        tr.selected td { background: #0ea5e922 !important; color: #38bdf8; border-bottom-color: #0ea5e9; }\n");
-        html.append("        .val { font-family: 'JetBrains Mono', monospace; font-size: 13px; }\n");
-        html.append("        .specs-list { list-style: none; padding: 0; margin: 0; text-align: right; font-size: 12px; color: #f8fafc; }\n");
-        html.append("        .spec-item { margin-bottom: 2px; border-bottom: 1px solid #1e293b; padding-bottom: 2px; }\n");
-        html.append("        .spec-item:last-child { border-bottom: none; }\n");
-        html.append("        .header-left { display: flex; flex-direction: column; gap: 4px; }\n");
-        html.append("        .header-right { display: flex; align-items: center; gap: 20px; }\n");
-        html.append("        #current-section-name { color: #38bdf8; font-weight: 600; font-size: 18px; }\n");
-        html.append("        .apexcharts-menu {\n");
-        html.append("            background: #1e293b !important;\n");
-        html.append("            border-color: #334155 !important;\n");
-        html.append("            color: #f8fafc !important;\n");
-        html.append("        }\n");
-        html.append("        .apexcharts-menu-item:hover {\n");
-        html.append("            background: #334155 !important;\n");
-        html.append("        }\n");
-        html.append("        .apexcharts-toolbar svg {\n");
-        html.append("            fill: #94a3b8 !important;\n");
-        html.append("        }\n");
-        html.append("    </style>\n");
-        html.append("</head>\n<body>\n");
-        html.append("    <div class=\"container\">\n");
+    private static void appendHeader(StringBuilder html, String title, List<String> specs) {
         html.append("        <div class=\"header\">\n");
         html.append("            <div class=\"header-left\">\n");
-        html.append("                <h1>GaProfiler Comparison</h1>\n");
+        html.append("                <h1>").append(escapeHtml(title)).append("</h1>\n");
         html.append("                <div id=\"current-section-name\">Select a section</div>\n");
         html.append("            </div>\n");
         html.append("            <div class=\"header-right\">\n");
         html.append("                <ul class=\"specs-list\">\n");
         for (String spec : specs) {
-            html.append("                    <li class=\"spec-item\">").append(spec).append("</li>\n");
+            html.append("                    <li class=\"spec-item\">").append(escapeHtml(spec)).append("</li>\n");
         }
         html.append("                </ul>\n");
         html.append("            </div>\n");
         html.append("        </div>\n");
-        html.append("        \n");
-        html.append("        <div class=\"card\">\n");
-        html.append("            <div class=\"controls\">\n");
-        html.append("                <span>Sort by:</span>\n");
-        html.append("                <button id=\"sort-none\" class=\"active\" onclick=\"setSort('none')\">Original</button>\n");
-        html.append("                <button id=\"sort-avg\" onclick=\"setSort('avg')\">Best Avg</button>\n");
-        html.append("                <span style=\"margin-left: 20px;\">View Mode:</span>\n");
-        html.append("                <button id=\"view-groups\" class=\"active\" onclick=\"setViewMode('groups')\">By Groups</button>\n");
-        html.append("                <button id=\"view-metrics\" onclick=\"setViewMode('metrics')\">By Metrics</button>\n");
-        html.append("            </div>\n");
-        html.append("            <div id=\"chart\"></div>\n");
+    }
+
+    private static void appendModeControls(StringBuilder html) {
+        html.append("        <div class=\"controls card\" style=\"padding: 16px 24px;\">\n");
+        html.append("            <span>Report Mode:</span>\n");
+        for (ReportMetricMode mode : ReportMetricMode.values()) {
+            html.append("            <button class=\"mode-button\" id=\"mode-")
+                    .append(mode.key())
+                    .append("\" onclick=\"setMode('")
+                    .append(mode.key())
+                    .append("')\">")
+                    .append(escapeHtml(mode.displayName()))
+                    .append("</button>\n");
+        }
         html.append("        </div>\n");
-        html.append("        \n");
-        html.append("        <div class=\"card\" style=\"padding: 0; overflow: hidden;\">\n");
-        html.append("            <table>\n");
-        html.append("                <thead>\n");
-        html.append("                    <tr>\n");
-        html.append("                        <th>Section Name</th>\n");
-        html.append("                        <th>Available in Runs</th>\n");
-        html.append("                        <th>Best Avg (").append(unitLabel).append(")</th>\n");
-        html.append("                    </tr>\n");
-        html.append("                </thead>\n");
-        html.append("                <tbody id=\"table-body\">\n");
+    }
 
-        Set<String> allSections = new TreeSet<>();
-        Map<String, String> tooltips = new HashMap<>();
-        for (Collection<ProfileData.Snapshot> runData : datasets.values()) {
-            for (ProfileData.Snapshot d : runData) {
-                allSections.add(d.getName());
-                if (d.getTooltip() != null) tooltips.put(d.getName(), d.getTooltip());
-            }
-        }
-
-        for (String section : allSections) {
-            int runsCount = 0;
-            double bestAvg = Double.MAX_VALUE;
-            for (Collection<ProfileData.Snapshot> runData : datasets.values()) {
-                for (ProfileData.Snapshot d : runData) {
-                    if (d.getName().equals(section)) {
-                        runsCount++;
-                        double avg = Profiler.getDisplayUnit().convertFromNanos(Math.round(d.getAvg()));
-                        if (avg < bestAvg) bestAvg = avg;
-                    }
-                }
-            }
-
-            String tooltip = tooltips.get(section);
-            String tooltipAttr = (tooltip != null) 
-                ? String.format(" data-tippy-content=\"%s\" style=\"font-weight: 600; color: #10b981; border-bottom: 1px dashed #334155;\"", tooltip)
-                : " style=\"font-weight: 600; color: #10b981;\"";
-
-            html.append(String.format("                    <tr onclick=\"selectSection('%s', this)\">\n", section));
-            html.append("                        <td").append(tooltipAttr).append(">").append(section).append("</td>\n");
-            html.append("                        <td>").append(runsCount).append(" / ").append(datasets.size()).append("</td>\n");
-            html.append(String.format(Locale.US, "                        <td class=\"val\">%.4f</td>\n", bestAvg));
-            html.append("                    </tr>\n");
-        }
-
-        html.append("                </tbody>\n");
-        html.append("            </table>\n");
+    private static void appendComparisonSortControls(StringBuilder html) {
+        html.append("        <div class=\"controls card\" style=\"padding: 16px 24px;\">\n");
+        html.append("            <span>Sort Groups By:</span>\n");
+        html.append("            <button class=\"mode-button group-sort-button active\" id=\"group-sort-none\" onclick=\"setGroupSort('none')\">Original</button>\n");
+        html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-min\" onclick=\"setGroupSort('min')\">Min</button>\n");
+        html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-avg\" onclick=\"setGroupSort('avg')\">Avg</button>\n");
+        html.append("            <button class=\"mode-button group-sort-button\" id=\"group-sort-max\" onclick=\"setGroupSort('max')\">Max</button>\n");
+        html.append("            <span style=\"margin-left: 16px;\">Direction:</span>\n");
+        html.append("            <button class=\"mode-button group-direction-button active\" id=\"group-direction-asc\" onclick=\"setSortDirection('asc')\">Ascending</button>\n");
+        html.append("            <button class=\"mode-button group-direction-button\" id=\"group-direction-desc\" onclick=\"setSortDirection('desc')\">Descending</button>\n");
         html.append("        </div>\n");
-        html.append("    </div>\n");
-        
-        html.append("    <script>\n");
-        html.append("        const comparisonData = {\n");
-        for (String section : allSections) {
-            html.append("            '").append(section).append("': [\n");
-            for (Map.Entry<String, Collection<ProfileData.Snapshot>> entry : datasets.entrySet()) {
-                String runLabel = entry.getKey();
-                ProfileData.Snapshot d = entry.getValue().stream()
-                    .filter(p -> p.getName().equals(section))
-                    .findFirst()
-                    .orElse(null);
-                
-                if (d != null) {
-                    double minMs = Profiler.getDisplayUnit().convertFromNanos(d.getMin());
-                    double avgMs = Profiler.getDisplayUnit().convertFromNanos(Math.round(d.getAvg()));
-                    double maxMs = Profiler.getDisplayUnit().convertFromNanos(d.getMax());
-                    html.append(String.format(Locale.US, 
-                        "                { label: '%s', min: %.6f, avg: %.6f, max: %.6f },\n",
-                        runLabel, minMs, avgMs, maxMs));
-                }
-            }
-            html.append("            ],\n");
-        }
-        html.append("        };\n\n");
+    }
 
-        html.append("        const sectionTooltips = {\n");
-        for (Map.Entry<String, String> entry : tooltips.entrySet()) {
-            html.append("            '").append(entry.getKey().replace("'", "\\'")).append("': '")
-                .append(entry.getValue().replace("'", "\\'")).append("',\n");
+    private static void appendModeScriptData(StringBuilder html) {
+        html.append("        const reportModes = {\n");
+        for (ReportMetricMode mode : ReportMetricMode.values()) {
+            html.append("            '").append(mode.key()).append("': {");
+            html.append("label: '").append(escapeJs(mode.displayName())).append("', ");
+            html.append("axisLabel: '").append(escapeJs(mode.axisLabel())).append("', ");
+            html.append("columns: [");
+            for (int i = 0; i < mode.columnLabels().size(); i++) {
+                if (i > 0) {
+                    html.append(", ");
+                }
+                html.append("'").append(escapeJs(mode.columnLabels().get(i))).append("'");
+            }
+            html.append("]},\n");
         }
         html.append("        };\n");
+    }
 
-        html.append("        let chart = null;\n");
-        html.append("        const unitLabel = '").append(unitLabel).append("';\n");
+    private static void appendSpecsScriptData(StringBuilder html, List<String> specs) {
         html.append("        const chartSpecs = [");
         for (int i = 0; i < specs.size(); i++) {
-            html.append("'").append(specs.get(i).replace("'", "\\'")).append("'");
-            if (i < specs.size() - 1) html.append(", ");
+            if (i > 0) {
+                html.append(", ");
+            }
+            html.append("'").append(escapeJs(specs.get(i))).append("'");
         }
         html.append("];\n");
-        html.append("        let currentSection = null;\n");
-        html.append("        let currentSort = 'none';\n");
-        html.append("        let currentViewMode = 'groups';\n\n");
-        html.append("        function generateDistinctColors(count) {\n");
-        html.append("            const colors = [];\n");
-        html.append("            for (let i = 0; i < count; i++) {\n");
-        html.append("                const hue = (i * 137.508) % 360;\n");
-        html.append("                colors.push(`hsl(${hue}, 75%, 60%)`);\n");
+    }
+
+    private static void appendSingleReportData(StringBuilder html, Collection<ProfileData.Snapshot> data) {
+        html.append("        const sections = [\n");
+        int index = 0;
+        for (ProfileData.Snapshot snapshot : data) {
+            if (index++ > 0) {
+                html.append(",\n");
+            }
+            html.append("            ").append(snapshotLiteral(snapshot));
+        }
+        html.append("\n        ];\n");
+    }
+
+    private static void appendComparisonData(StringBuilder html, Map<String, Collection<ProfileData.Snapshot>> datasets) {
+        Map<String, String> tooltips = new LinkedHashMap<>();
+        Map<String, Map<String, ProfileData.Snapshot>> bySection = new TreeMap<>();
+
+        for (Map.Entry<String, Collection<ProfileData.Snapshot>> entry : datasets.entrySet()) {
+            for (ProfileData.Snapshot snapshot : entry.getValue()) {
+                bySection.computeIfAbsent(snapshot.getName(), ignored -> new LinkedHashMap<>()).put(entry.getKey(), snapshot);
+                if (snapshot.getTooltip() != null && !snapshot.getTooltip().isEmpty()) {
+                    tooltips.put(snapshot.getName(), snapshot.getTooltip());
+                }
+            }
+        }
+
+        html.append("        const comparisonSections = [\n");
+        int sectionIndex = 0;
+        for (Map.Entry<String, Map<String, ProfileData.Snapshot>> entry : bySection.entrySet()) {
+            if (sectionIndex++ > 0) {
+                html.append(",\n");
+            }
+            html.append("            { name: '").append(escapeJs(entry.getKey())).append("', tooltip: ");
+            String tooltip = tooltips.get(entry.getKey());
+            if (tooltip == null) {
+                html.append("null");
+            } else {
+                html.append("'").append(escapeJs(tooltip)).append("'");
+            }
+            html.append(", runs: [");
+            int runIndex = 0;
+            for (Map.Entry<String, Collection<ProfileData.Snapshot>> dataset : datasets.entrySet()) {
+                if (runIndex++ > 0) {
+                    html.append(", ");
+                }
+                ProfileData.Snapshot snapshot = entry.getValue().get(dataset.getKey());
+                if (snapshot == null) {
+                    snapshot = new ProfileData.Snapshot(entry.getKey(), tooltip, ProfileData.MetricStats.empty(), ProfileData.MetricStats.empty(), ProfileData.MetricAvailability.DISABLED);
+                }
+                html.append("{ label: '").append(escapeJs(dataset.getKey())).append("', ");
+                appendModeMetrics(html, snapshot);
+                html.append(" }");
+            }
+            html.append("] }");
+        }
+        html.append("\n        ];\n");
+    }
+
+    private static void appendModeMetrics(StringBuilder html, ProfileData.Snapshot snapshot) {
+        html.append("executionTime: ").append(metricLiteral(ReportMetricMode.CODE_EXECUTION_TIME, snapshot)).append(", ");
+        html.append("memoryAllocation: ").append(metricLiteral(ReportMetricMode.CODE_MEMORY_ALLOCATION, snapshot));
+    }
+
+    private static String snapshotLiteral(ProfileData.Snapshot snapshot) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("{ name: '").append(escapeJs(snapshot.getName())).append("', tooltip: ");
+        if (snapshot.getTooltip() == null) {
+            builder.append("null");
+        } else {
+            builder.append("'").append(escapeJs(snapshot.getTooltip())).append("'");
+        }
+        builder.append(", ");
+        appendModeMetrics(builder, snapshot);
+        builder.append(" }");
+        return builder.toString();
+    }
+
+    private static String metricLiteral(ReportMetricMode mode, ProfileData.Snapshot snapshot) {
+        ProfileData.MetricStats stats = mode.stats(snapshot);
+        boolean supported = mode.isSupported(snapshot);
+        return String.format(Locale.US,
+                "{ supported: %s, unavailable: '%s', count: %d, min: %.6f, avg: %.6f, max: %.6f, total: %.6f }",
+                supported ? "true" : "false",
+                escapeJs(mode.unavailableLabel(snapshot)),
+                stats.getCount(),
+                mode.normalize(stats.getMin()),
+                mode.normalize(Math.round(stats.getAvg())),
+                mode.normalize(stats.getMax()),
+                mode.normalize(stats.getTotal()));
+    }
+
+    private static void appendSharedScriptHelpers(StringBuilder html) {
+        html.append("        function escapeHtml(value) { return (value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\\\"', '&quot;'); }\n");
+        html.append("        function formatMetricValue(value, modeKey) {\n");
+        html.append("            if (modeKey === '" + ReportMetricMode.CODE_EXECUTION_TIME.key() + "') {\n");
+        html.append("                return value.toFixed(4) + ' " + escapeJs(Profiler.getDisplayUnit().label()) + "';\n");
         html.append("            }\n");
-        html.append("            return colors;\n");
-        html.append("        }\n\n");
-        html.append("        function setSort(mode) {\n");
-        html.append("            currentSort = mode;\n");
-        html.append("            document.querySelectorAll('.controls button[id^=\"sort-\"]').forEach(b => b.classList.remove('active'));\n");
-        html.append("            document.getElementById('sort-' + mode).classList.add('active');\n");
-        html.append("            if (currentSection) updateChart();\n");
-        html.append("        }\n\n");
-
-        html.append("        function setViewMode(mode) {\n");
-        html.append("            currentViewMode = mode;\n");
-        html.append("            document.querySelectorAll('.controls button[id^=\"view-\"]').forEach(b => b.classList.remove('active'));\n");
-        html.append("            document.getElementById('view-' + mode).classList.add('active');\n");
-        html.append("            if (currentSection) updateChart();\n");
-        html.append("        }\n\n");
-
-        html.append("        function selectSection(name, rowElement) {\n");
-        html.append("            currentSection = name;\n");
-        html.append("            document.getElementById('current-section-name').innerText = name;\n");
-        html.append("            document.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));\n");
-        html.append("            if (rowElement) rowElement.classList.add('selected');\n");
-        html.append("            updateChart();\n");
-        html.append("        }\n\n");
-
-        html.append("        function updateChart() {\n");
-        html.append("            let data = [...comparisonData[currentSection]];\n");
-        html.append("            const tooltip = sectionTooltips[currentSection] || '';\n");
-        html.append("            if (currentSort === 'avg') {\n");
-        html.append("                data.sort((a, b) => a.avg - b.avg);\n");
-        html.append("            }\n\n");
-        
-        html.append("            let series, categories, colors;\n");
-        html.append("            if (currentViewMode === 'groups') {\n");
-        html.append("                series = [\n");
-        html.append("                    { name: 'Min', data: data.map(d => parseFloat(d.min.toFixed(4))) },\n");
-        html.append("                    { name: 'Avg', data: data.map(d => parseFloat(d.avg.toFixed(4))) },\n");
-        html.append("                    { name: 'Max', data: data.map(d => parseFloat(d.max.toFixed(4))) }\n");
-        html.append("                ];\n");
-        html.append("                categories = data.map(d => d.label);\n");
-        html.append("                colors = ['#10b981', '#f59e0b', '#ef4444'];\n");
-        html.append("            } else {\n");
-        html.append("                categories = ['Min', 'Avg', 'Max'];\n");
-        html.append("                series = data.map(d => ({\n");
-        html.append("                    name: d.label,\n");
-        html.append("                    data: [\n");
-        html.append("                        parseFloat(d.min.toFixed(4)),\n");
-        html.append("                        parseFloat(d.avg.toFixed(4)),\n");
-        html.append("                        parseFloat(d.max.toFixed(4))\n");
-        html.append("                    ]\n");
-        html.append("                }));\n");
-        html.append("                colors = generateDistinctColors(series.length);\n");
-        html.append("            }\n\n");
-
-        html.append("            const options = {\n");
-        html.append("                title: { text: currentSection, align: 'left', style: { color: '#38bdf8', fontSize: '20px' }, offsetY: 0 },\n");
-        html.append("                subtitle: { text: tooltip || '', align: 'left', style: { color: '#94a3b8', fontSize: '14px' }, offsetY: 25 },\n");
-        html.append("                annotations: {\n");
-        html.append("                    texts: [{\n");
-        html.append("                        x: '98%', y: 15, text: chartSpecs, textAnchor: 'end',\n");
-        html.append("                        style: { fontSize: '11px', fontFamily: 'Inter', color: '#f8fafc' }\n");
-        html.append("                    }]\n");
-        html.append("                },\n");
-        html.append("                series: series,\n");
-        html.append("                chart: {\n");
-        html.append("                    type: 'bar',\n");
-        html.append("                    height: 400,\n");
-        html.append("                    background: '#1e293b',\n");
-        html.append("                    toolbar: { \n");
-        html.append("                        show: true,\n");
-        html.append("                        offsetY: -20,\n");
-        html.append("                        tools: { download: true, selection: false, zoom: false, zoomin: false, zoomout: false, pan: false, reset: false }\n");
-        html.append("                    }\n");
-        html.append("                },\n");
-        html.append("                colors: colors,\n");
-        html.append("                plotOptions: {\n");
-        html.append("                    bar: {\n");
-        html.append("                        horizontal: false,\n");
-        html.append("                        columnWidth: '55%',\n");
-        html.append("                        borderRadius: 4,\n");
-        html.append("                        dataLabels: { position: 'top' }\n");
-        html.append("                    }\n");
-        html.append("                },\n");
-        html.append("                dataLabels: {\n");
-        html.append("                    enabled: true,\n");
-        html.append("                    formatter: (val) => val.toFixed(2),\n");
-        html.append("                    offsetY: -30,\n");
-        html.append("                    style: { fontSize: '10px', colors: ['#f8fafc'] }\n");
-        html.append("                },\n");
-        html.append("                xaxis: {\n");
-        html.append("                    title: { text: 'GA Profiler', style: { color: '#475569', fontSize: '10px' } },\n");
-        html.append("                    categories: categories,\n");
-        html.append("                    labels: { style: { colors: '#94a3b8' } }\n");
-        html.append("                },\n");
-        html.append("                yaxis: {\n");
-        html.append("                    title: { text: 'Time (' + unitLabel + ')', style: { color: '#94a3b8' } },\n");
-        html.append("                    labels: { style: { colors: '#94a3b8' } }\n");
-        html.append("                },\n");
-        html.append("                tooltip: { theme: 'dark' },\n");
-        html.append("                grid: { borderColor: '#334155', padding: { top: 40 } },\n");
+        html.append("            if (value < 1024) { return value.toFixed(0) + ' B'; }\n");
+        html.append("            if (value < 1024 * 1024) { return (value / 1024).toFixed(2) + ' KB'; }\n");
+        html.append("            if (value < 1024 * 1024 * 1024) { return (value / (1024 * 1024)).toFixed(2) + ' MB'; }\n");
+        html.append("            return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB';\n");
+        html.append("        }\n");
+        html.append("        function buildBaseChartOptions(mode, subtitle) {\n");
+        html.append("            return {\n");
+        html.append("                title: { text: '', align: 'left', style: { color: '#38bdf8', fontSize: '20px' } },\n");
+        html.append("                subtitle: { text: subtitle || '', align: 'left', style: { color: '#94a3b8', fontSize: '14px' } },\n");
+        html.append("                chart: { type: 'bar', height: 360, background: '#1e293b', toolbar: { show: true, tools: { download: true, selection: false, zoom: false, zoomin: false, zoomout: false, pan: false, reset: false } } },\n");
+        html.append("                annotations: { texts: [{ x: '98%', y: 12, text: chartSpecs.join(' | '), textAnchor: 'end', style: { fontSize: '11px', fontFamily: 'Inter', color: '#f8fafc' } }] },\n");
+        html.append("                series: [],\n");
+        html.append("                colors: ['#10b981', '#f59e0b', '#ef4444', '#38bdf8', '#f97316', '#a855f7'],\n");
+        html.append("                plotOptions: { bar: { columnWidth: '55%', borderRadius: 6, dataLabels: { position: 'top' } } },\n");
+        html.append("                grid: { borderColor: '#334155', strokeDashArray: 4, padding: { top: 40 } },\n");
         html.append("                theme: { mode: 'dark' },\n");
-        html.append("                legend: { position: 'top', horizontalAlign: 'center', offsetY: 0, labels: { colors: '#f8fafc' } }\n");
-        html.append("            };\n\n");
+        html.append("                legend: { position: 'top', horizontalAlign: 'center', labels: { colors: '#f8fafc' } },\n");
+        html.append("                xaxis: { categories: [], labels: { style: { colors: '#94a3b8', fontSize: '12px' } }, axisBorder: { show: false }, axisTicks: { show: false } },\n");
+        html.append("                noData: { text: '', align: 'center', verticalAlign: 'middle', style: { color: '#f8fafc' } }\n");
+        html.append("            };\n");
+        html.append("        }\n");
+        html.append("        function renderChart(options) {\n");
+        html.append("            const chartDiv = document.querySelector('#chart');\n");
+        html.append("            if (chart) { chart.destroy(); }\n");
+        html.append("            chart = new ApexCharts(chartDiv, options);\n");
+        html.append("            chart.render();\n");
+        html.append("        }\n");
+    }
 
-        html.append("            const chartDiv = document.querySelector(\"#chart\");\n");
-        html.append("            if (chart) {\n");
-        html.append("                chart.updateOptions(options);\n");
-        html.append("            } else {\n");
-        html.append("                chart = new ApexCharts(chartDiv, options);\n");
-        html.append("                chart.render();\n");
-        html.append("            }\n");
-        html.append("        }\n\n");
+    private static String escapeHtml(String value) {
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
+    }
 
-        html.append("        window.onload = () => {\n");
-        html.append("            const firstRow = document.querySelector('#table-body tr');\n");
-        html.append("            if (firstRow) firstRow.click();\n");
-        html.append("            tippy('[data-tippy-content]', { theme: 'material' });\n");
-        html.append("        };\n");
-        html.append("    </script>\n");
-        html.append("</body>\n</html>");
+    private static String escapeJs(String value) {
+        return value.replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\r", "")
+                .replace("\n", "\\n");
+    }
 
+    private static void writeHtml(String filePath, String html, String description) {
         try (FileWriter writer = new FileWriter(filePath, StandardCharsets.UTF_8)) {
-            writer.write(html.toString());
+            writer.write(html);
         } catch (IOException e) {
-            System.err.println("Failed to write HTML comparison report: " + e.getMessage());
+            System.err.println("Failed to write " + description + ": " + e.getMessage());
         }
     }
 }

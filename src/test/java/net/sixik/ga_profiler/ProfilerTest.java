@@ -1,17 +1,28 @@
 package net.sixik.ga_profiler;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ProfilerTest {
+    @AfterEach
+    void tearDown() {
+        Profiler.clearAllocationCounterOverrideForTesting();
+        Profiler.setAllocationProfilingEnabled(false);
+        Profiler.setDisplayUnit(Profiler.TimeUnit.MILLISECONDS);
+        Profiler.reset();
+    }
+
     @Test
     void collectsSamplesFromRegisteredSection() {
         Profiler.reset();
@@ -20,11 +31,10 @@ class ProfilerTest {
         Profiler.push(section);
         Profiler.pop();
 
-        Map<String, ProfileData.Snapshot> snapshots = Profiler.getData().stream()
-                .collect(Collectors.toMap(ProfileData.Snapshot::getName, s -> s));
-
-        assertEquals(1L, snapshots.get("tick.section").getCount());
-        assertEquals("Tick work", snapshots.get("tick.section").getTooltip());
+        ProfileData.Snapshot snapshot = snapshotByName().get("tick.section");
+        assertEquals(1L, snapshot.getExecutionTime().getCount());
+        assertEquals("Tick work", snapshot.getTooltip());
+        assertEquals(ProfileData.MetricAvailability.DISABLED, snapshot.getMemoryAllocationAvailability());
     }
 
     @Test
@@ -39,11 +49,9 @@ class ProfilerTest {
             }
         }
 
-        Map<String, ProfileData.Snapshot> snapshots = Profiler.getData().stream()
-                .collect(Collectors.toMap(ProfileData.Snapshot::getName, s -> s));
-
-        assertEquals(1L, snapshots.get("parent").getCount());
-        assertEquals(1L, snapshots.get("child").getCount());
+        Map<String, ProfileData.Snapshot> snapshots = snapshotByName();
+        assertEquals(1L, snapshots.get("parent").getExecutionTime().getCount());
+        assertEquals(1L, snapshots.get("child").getExecutionTime().getCount());
     }
 
     @Test
@@ -62,12 +70,8 @@ class ProfilerTest {
             Profiler.pop();
         }
 
-        ProfileData.Snapshot snapshot = Profiler.getData().stream()
-                .filter(s -> s.getName().equals("limited"))
-                .findFirst()
-                .orElseThrow();
-
-        assertEquals(2L, snapshot.getCount());
+        ProfileData.Snapshot snapshot = snapshotByName().get("limited");
+        assertEquals(2L, snapshot.getExecutionTime().getCount());
     }
 
     @Test
@@ -93,7 +97,8 @@ class ProfilerTest {
         ProfileData.Snapshot snapshot = loaded.iterator().next();
         assertEquals("round.trip", snapshot.getName());
         assertEquals("Tooltip", snapshot.getTooltip());
-        assertEquals(1L, snapshot.getCount());
+        assertEquals(1L, snapshot.getExecutionTime().getCount());
+        assertEquals(ProfileData.MetricAvailability.DISABLED, snapshot.getMemoryAllocationAvailability());
     }
 
     @Test
@@ -111,11 +116,9 @@ class ProfilerTest {
             Profiler.pop();
         }
 
-        Map<String, ProfileData.Snapshot> snapshots = Profiler.getData().stream()
-                .collect(Collectors.toMap(ProfileData.Snapshot::getName, s -> s));
-
-        assertEquals(3L, snapshots.get("existing").getCount());
-        assertEquals(3L, snapshots.get("future").getCount());
+        Map<String, ProfileData.Snapshot> snapshots = snapshotByName();
+        assertEquals(3L, snapshots.get("existing").getExecutionTime().getCount());
+        assertEquals(3L, snapshots.get("future").getExecutionTime().getCount());
     }
 
     @Test
@@ -141,11 +144,108 @@ class ProfilerTest {
         Profiler.push(section);
         Profiler.pop();
 
-        ProfileData.Snapshot snapshot = Profiler.getData().stream()
-                .filter(s -> s.getName().equals("threaded"))
-                .findFirst()
-                .orElseThrow();
+        ProfileData.Snapshot snapshot = snapshotByName().get("threaded");
+        assertEquals(1L, snapshot.getExecutionTime().getCount());
+    }
 
-        assertEquals(1L, snapshot.getCount());
+    @Test
+    void allocationProfilingIsDisabledByDefault() {
+        Profiler.useAllocationCounterForTesting(sequenceCounter(true, 1_000L, 1_064L));
+        Profiler.reset();
+        Profiler.Section section = Profiler.register("alloc.disabled", null, 0);
+
+        Profiler.push(section);
+        Profiler.pop();
+
+        ProfileData.Snapshot snapshot = snapshotByName().get("alloc.disabled");
+        assertFalse(Profiler.isAllocationProfilingEnabled());
+        assertEquals(ProfileData.MetricAvailability.DISABLED, snapshot.getMemoryAllocationAvailability());
+        assertEquals(0L, snapshot.getMemoryAllocation().getCount());
+    }
+
+    @Test
+    void collectsAllocatedBytesPerSectionWhenEnabled() {
+        Profiler.useAllocationCounterForTesting(sequenceCounter(true, 10_000L, 10_256L));
+        Profiler.setAllocationProfilingEnabled(true);
+        Profiler.reset();
+        Profiler.Section section = Profiler.register("alloc.enabled", "Allocation path", 0);
+
+        Profiler.push(section);
+        Profiler.pop();
+
+        ProfileData.Snapshot snapshot = snapshotByName().get("alloc.enabled");
+        assertEquals(ProfileData.MetricAvailability.COLLECTED, snapshot.getMemoryAllocationAvailability());
+        assertEquals(1L, snapshot.getMemoryAllocation().getCount());
+        assertEquals(256L, snapshot.getMemoryAllocation().getTotal());
+        assertEquals(256.0, snapshot.getMemoryAllocation().getAvg());
+    }
+
+    @Test
+    void marksMemoryAllocationAsNotSupportedWhenJvmCounterIsUnavailable() {
+        Profiler.useAllocationCounterForTesting(sequenceCounter(false, 0L));
+        Profiler.setAllocationProfilingEnabled(true);
+        Profiler.reset();
+        Profiler.Section section = Profiler.register("alloc.unsupported", null, 0);
+
+        Profiler.push(section);
+        Profiler.pop();
+
+        ProfileData.Snapshot snapshot = snapshotByName().get("alloc.unsupported");
+        assertEquals(ProfileData.MetricAvailability.NOT_SUPPORTED, snapshot.getMemoryAllocationAvailability());
+        assertEquals(0L, snapshot.getMemoryAllocation().getCount());
+        assertEquals(1L, snapshot.getExecutionTime().getCount());
+    }
+
+    @Test
+    void dumpAndLoadRoundTripAllocationMetricsAndAvailability() throws Exception {
+        Profiler.useAllocationCounterForTesting(sequenceCounter(true, 2_000L, 2_512L));
+        Profiler.setAllocationProfilingEnabled(true);
+        Profiler.reset();
+        Profiler.Section section = Profiler.register("alloc.round.trip", "Allocation dump", 0);
+
+        Profiler.push(section);
+        Profiler.pop();
+
+        Path dump = Files.createTempFile("profiler-allocation", ".dump");
+        Profiler.dump(dump.toString());
+        ProfileData.Snapshot snapshot = Profiler.load(dump.toString()).iterator().next();
+
+        assertEquals(ProfileData.MetricAvailability.COLLECTED, snapshot.getMemoryAllocationAvailability());
+        assertEquals(512L, snapshot.getMemoryAllocation().getTotal());
+        assertEquals("Allocation dump", snapshot.getTooltip());
+    }
+
+    @Test
+    void loadStillSupportsLegacyTimeOnlyDumpFormat() throws Exception {
+        Path dump = Files.createTempFile("profiler-legacy", ".dump");
+        Files.writeString(dump, """
+                Name\tTooltip\tMin\tMax\tTotal\tCount
+                legacy.section\tLegacy tooltip\t100\t200\t300\t2
+                """);
+
+        ProfileData.Snapshot snapshot = Profiler.load(dump.toString()).iterator().next();
+        assertEquals("legacy.section", snapshot.getName());
+        assertEquals(ProfileData.MetricAvailability.DISABLED, snapshot.getMemoryAllocationAvailability());
+        assertEquals(300L, snapshot.getExecutionTime().getTotal());
+    }
+
+    private static Map<String, ProfileData.Snapshot> snapshotByName() {
+        return Profiler.getData().stream()
+                .collect(Collectors.toMap(ProfileData.Snapshot::getName, s -> s));
+    }
+
+    private static Profiler.AllocationCounter sequenceCounter(boolean supported, long... values) {
+        AtomicInteger index = new AtomicInteger();
+        return new Profiler.AllocationCounter() {
+            @Override
+            public boolean isSupported() {
+                return supported;
+            }
+
+            @Override
+            public long currentThreadAllocatedBytes() {
+                return values[Math.min(index.getAndIncrement(), values.length - 1)];
+            }
+        };
     }
 }

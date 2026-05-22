@@ -1,25 +1,32 @@
 package net.sixik.ga_profiler;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
 
 public class Main {
     public static void main(String[] args) throws InterruptedException {
         Random random = new Random();
         Profiler.configureDefaultSampleLimit(5_000);
         Profiler.setDisplayUnit(Profiler.TimeUnit.MILLISECONDS);
+        Profiler.setAllocationProfilingEnabled(true);
+
         Profiler.Section renderScene = Profiler.register(
                 "render.scene",
-                "Главный проход отрисовки всей сцены (Full Scene Render)",
+                "Main full-scene rendering pass",
                 0
         );
         Profiler.Section physicsUpdate = Profiler.register(
                 "physics.update",
-                "Симуляция физики и обработка коллизий (Physics Engine)",
+                "Physics simulation and collision processing",
                 0
         );
         Profiler.Section uiRender = Profiler.register(
                 "ui.render",
-                "Отрисовка пользовательского интерфейса и шрифтов",
+                "User interface rendering and font drawing",
                 0
         );
 
@@ -36,10 +43,10 @@ public class Main {
         System.out.println("Generating reports...");
 
         List<String> specs = Arrays.asList(
-                "Ryzen Threadripper 1950x",
+                "Ryzen Threadripper 1950X",
                 "RTX 5070",
-                "RAM 64 gb: Gived 10 gb",
-                "SSD M2"
+                "RAM 64 GB (10 GB assigned)",
+                "NVMe SSD"
         );
 
         HtmlReporter.generate("performance_report.html", Profiler.load("v1_1.dump"), specs);
