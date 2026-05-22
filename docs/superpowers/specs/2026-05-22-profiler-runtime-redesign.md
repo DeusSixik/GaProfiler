@@ -25,6 +25,9 @@ For profiling `Generator Accelerator`, the main priority is not backward compati
 - Support both explicit `push/pop` and `try-with-resources` scopes.
 - Preserve report generation through `ProfileData.Snapshot`, `dump()`, and `load()`.
 - Keep tooltip and section name metadata for reports.
+- Support per-section sample limits.
+- Support a bulk operation that applies one sample limit to all registered sections.
+- Support choosing report display units for nanoseconds, milliseconds, or seconds.
 
 ### Runtime
 
@@ -33,6 +36,7 @@ For profiling `Generator Accelerator`, the main priority is not backward compati
 - Avoid per-sample allocation.
 - Keep sampling logic thread-safe for multiple producer threads.
 - Make reset safe when threads outlive one profiling run.
+- Keep time storage in raw nanoseconds regardless of report display unit.
 
 ## Recommended Approach
 
@@ -50,9 +54,14 @@ This keeps the runtime path cheap:
 
 - `Profiler.Section register(String name)`
 - `Profiler.Section register(String name, String tooltip)`
+- `Profiler.Section register(String name, String tooltip, long maxSamples)`
 - `void push(Profiler.Section section)`
 - `Profiler.ProfileScope scope(Profiler.Section section)`
 - `void pop()`
+- `void configureDefaultSampleLimit(long maxSamples)`
+- `void applySampleLimitToAllSections(long maxSamples)`
+- `void setDisplayUnit(Profiler.TimeUnit unit)`
+- `Profiler.TimeUnit getDisplayUnit()`
 - `void reset()`
 - `Collection<ProfileData.Snapshot> getData()`
 - `void dump(String path)`
@@ -74,8 +83,10 @@ Tooltip and section names become section metadata owned by the registered `Secti
   - `int id`
   - `String name`
   - `String tooltip`
+  - `volatile long maxSamples`
 - Registration is a cold-path operation and may use synchronization.
 - Section ids are assigned sequentially and are stable for the lifetime of the process.
+- New sections inherit the current default sample limit unless a specific limit is passed during registration.
 
 ### Thread-local state
 
@@ -106,11 +117,29 @@ This avoids the current issue where only the calling thread is fully reset.
 
 Shared aggregation exists only on the cold path.
 
+### Sample limit behavior
+
+- Limits are tracked per section.
+- `maxSamples <= 0` means unlimited collection.
+- The hot path checks the local sample count for the section before writing a new sample.
+- If a thread has already recorded at least `maxSamples` samples for that section in the current generation, it skips the update.
+- `applySampleLimitToAllSections()` updates all registered sections and also updates the default for future registrations.
+
+This means the limit is deterministic per section and does not require global coordination on every sample.
+
+### Time unit behavior
+
+- All recorded durations remain in raw nanoseconds internally.
+- `ProfileData.Snapshot` continues to expose raw nanosecond values.
+- A profiler-level display unit controls how values are rendered in reports and dumps meant for humans.
+- `HtmlReporter` reads the configured display unit and formats labels and numbers accordingly.
+
 ## Error Handling
 
 - `push(null)` throws `NullPointerException`.
 - `pop()` on an empty stack throws `IllegalStateException` to surface instrumentation bugs immediately.
 - `register()` rejects duplicate section names with `IllegalArgumentException`.
+- Sample limit configuration rejects negative values other than the chosen sentinel for unlimited mode.
 - `load()` remains tolerant of malformed files and skips invalid input through existing error reporting style.
 
 ## Testing Strategy
@@ -122,6 +151,8 @@ Shared aggregation exists only on the cold path.
 - `scope(section)` closes correctly
 - duplicate registration fails
 - `pop()` without `push()` fails fast
+- per-section sample limit stops collection after the configured threshold
+- bulk sample limit updates existing and future sections
 
 ### Concurrency and reset
 
@@ -131,6 +162,7 @@ Shared aggregation exists only on the cold path.
 ### Persistence
 
 - `dump()` and `load()` round-trip snapshots
+- display unit affects human-readable output formatting without changing raw stored nanoseconds
 
 ## Files Expected To Change
 
