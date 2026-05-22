@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 
 public class HtmlReporter {
     public static void generate(String filePath, Collection<ProfileData.Snapshot> data, List<String> specs) {
+        String unitLabel = Profiler.getDisplayUnit().label();
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         html.append("    <meta charset=\"UTF-8\">\n");
@@ -74,25 +75,25 @@ public class HtmlReporter {
         html.append("                    <tr>\n");
         html.append("                        <th>Section Name</th>\n");
         html.append("                        <th>Calls</th>\n");
-        html.append("                        <th>Min (ms)</th>\n");
-        html.append("                        <th>Avg (ms)</th>\n");
-        html.append("                        <th>Max (ms)</th>\n");
-        html.append("                        <th>Total (ms)</th>\n");
+        html.append("                        <th>Min (").append(unitLabel).append(")</th>\n");
+        html.append("                        <th>Avg (").append(unitLabel).append(")</th>\n");
+        html.append("                        <th>Max (").append(unitLabel).append(")</th>\n");
+        html.append("                        <th>Total (").append(unitLabel).append(")</th>\n");
         html.append("                    </tr>\n");
         html.append("                </thead>\n");
         html.append("                <tbody id=\"table-body\">\n");
 
         int idx = 0;
         for (ProfileData.Snapshot d : data) {
-            double minMs = d.getMin() / 1_000_000.0;
-            double avgMs = d.getAvg() / 1_000_000.0;
-            double maxMs = d.getMax() / 1_000_000.0;
-            double totalMs = d.getTotal() / 1_000_000.0;
+            double minValue = Profiler.getDisplayUnit().convertFromNanos(d.getMin());
+            double avgValue = Profiler.getDisplayUnit().convertFromNanos(Math.round(d.getAvg()));
+            double maxValue = Profiler.getDisplayUnit().convertFromNanos(d.getMax());
+            double totalValue = Profiler.getDisplayUnit().convertFromNanos(d.getTotal());
 
             String escapedTooltip = d.getTooltip() == null ? "" : d.getTooltip().replace("'", "\\'");
             html.append(String.format(Locale.US,
                 "                    <tr onclick=\"updateChart('%s', %.6f, %.6f, %.6f, '%s', this)\" id=\"row-%d\">\n",
-                d.getName(), minMs, avgMs, maxMs, escapedTooltip, idx++
+                d.getName(), minValue, avgValue, maxValue, escapedTooltip, idx++
             ));
             
             String tooltipAttr = (d.getTooltip() != null && !d.getTooltip().isEmpty()) 
@@ -101,10 +102,10 @@ public class HtmlReporter {
 
             html.append("                        <td").append(tooltipAttr).append(">").append(d.getName()).append("</td>\n");
             html.append("                        <td>").append(d.getCount()).append("</td>\n");
-            html.append(String.format(Locale.US, "                        <td class=\"val\">%.4f</td>\n", minMs));
-            html.append(String.format(Locale.US, "                        <td class=\"val\" style=\"color: #f59e0b;\">%.4f</td>\n", avgMs));
-            html.append(String.format(Locale.US, "                        <td class=\"val\">%.4f</td>\n", maxMs));
-            html.append(String.format(Locale.US, "                        <td class=\"val\">%.2f</td>\n", totalMs));
+            html.append(String.format(Locale.US, "                        <td class=\"val\">%.4f</td>\n", minValue));
+            html.append(String.format(Locale.US, "                        <td class=\"val\" style=\"color: #f59e0b;\">%.4f</td>\n", avgValue));
+            html.append(String.format(Locale.US, "                        <td class=\"val\">%.4f</td>\n", maxValue));
+            html.append(String.format(Locale.US, "                        <td class=\"val\">%.2f</td>\n", totalValue));
             html.append("                    </tr>\n");
         }
 
@@ -116,6 +117,7 @@ public class HtmlReporter {
         
         html.append("    <script>\n");
         html.append("        let chart = null;\n");
+        html.append("        const unitLabel = '").append(unitLabel).append("';\n");
         html.append("        const chartSpecs = [");
         for (int i = 0; i < specs.size(); i++) {
             html.append("'").append(specs.get(i).replace("'", "\\'")).append("'");
@@ -168,7 +170,7 @@ public class HtmlReporter {
         html.append("                },\n");
         html.append("                dataLabels: {\n");
         html.append("                    enabled: true,\n");
-        html.append("                    formatter: (val) => val.toFixed(4) + ' ms',\n");
+        html.append("                    formatter: (val) => val.toFixed(4) + ' ' + unitLabel,\n");
         html.append("                    offsetY: -30,\n");
         html.append("                    style: { fontSize: '12px', colors: ['#f8fafc'], fontFamily: 'JetBrains Mono' }\n");
         html.append("                },\n");
@@ -180,10 +182,10 @@ public class HtmlReporter {
         html.append("                    axisTicks: { show: false }\n");
         html.append("                },\n");
         html.append("                yaxis: {\n");
-        html.append("                    title: { text: 'Time in Milliseconds (ms)', style: { color: '#94a3b8', fontWeight: 500 } },\n");
+        html.append("                    title: { text: 'Time (' + unitLabel + ')', style: { color: '#94a3b8', fontWeight: 500 } },\n");
         html.append("                    labels: { style: { colors: '#94a3b8' }, formatter: (v) => v.toFixed(2) }\n");
         html.append("                },\n");
-        html.append("                tooltip: { theme: 'dark', y: { formatter: (v) => v.toFixed(6) + ' ms' } },\n");
+        html.append("                tooltip: { theme: 'dark', y: { formatter: (v) => v.toFixed(6) + ' ' + unitLabel } },\n");
         html.append("                grid: { borderColor: '#334155', strokeDashArray: 4, padding: { top: 40 } },\n");
         html.append("                theme: { mode: 'dark' },\n");
         html.append("                legend: { show: true, position: 'top', horizontalAlign: 'center', offsetY: 0, labels: { colors: '#f8fafc' } }\n");
@@ -214,6 +216,7 @@ public class HtmlReporter {
     }
 
     public static void generateComparison(String filePath, Map<String, Collection<ProfileData.Snapshot>> datasets, List<String> specs) {
+        String unitLabel = Profiler.getDisplayUnit().label();
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
         html.append("    <meta charset=\"UTF-8\">\n");
@@ -290,7 +293,7 @@ public class HtmlReporter {
         html.append("                    <tr>\n");
         html.append("                        <th>Section Name</th>\n");
         html.append("                        <th>Available in Runs</th>\n");
-        html.append("                        <th>Best Avg (ms)</th>\n");
+        html.append("                        <th>Best Avg (").append(unitLabel).append(")</th>\n");
         html.append("                    </tr>\n");
         html.append("                </thead>\n");
         html.append("                <tbody id=\"table-body\">\n");
@@ -311,7 +314,7 @@ public class HtmlReporter {
                 for (ProfileData.Snapshot d : runData) {
                     if (d.getName().equals(section)) {
                         runsCount++;
-                        double avg = d.getAvg() / 1_000_000.0;
+                        double avg = Profiler.getDisplayUnit().convertFromNanos(Math.round(d.getAvg()));
                         if (avg < bestAvg) bestAvg = avg;
                     }
                 }
@@ -346,9 +349,9 @@ public class HtmlReporter {
                     .orElse(null);
                 
                 if (d != null) {
-                    double minMs = d.getMin() / 1_000_000.0;
-                    double avgMs = d.getAvg() / 1_000_000.0;
-                    double maxMs = d.getMax() / 1_000_000.0;
+                    double minMs = Profiler.getDisplayUnit().convertFromNanos(d.getMin());
+                    double avgMs = Profiler.getDisplayUnit().convertFromNanos(Math.round(d.getAvg()));
+                    double maxMs = Profiler.getDisplayUnit().convertFromNanos(d.getMax());
                     html.append(String.format(Locale.US, 
                         "                { label: '%s', min: %.6f, avg: %.6f, max: %.6f },\n",
                         runLabel, minMs, avgMs, maxMs));
@@ -366,6 +369,7 @@ public class HtmlReporter {
         html.append("        };\n");
 
         html.append("        let chart = null;\n");
+        html.append("        const unitLabel = '").append(unitLabel).append("';\n");
         html.append("        const chartSpecs = [");
         for (int i = 0; i < specs.size(); i++) {
             html.append("'").append(specs.get(i).replace("'", "\\'")).append("'");
@@ -475,7 +479,7 @@ public class HtmlReporter {
         html.append("                    labels: { style: { colors: '#94a3b8' } }\n");
         html.append("                },\n");
         html.append("                yaxis: {\n");
-        html.append("                    title: { text: 'Time (ms)', style: { color: '#94a3b8' } },\n");
+        html.append("                    title: { text: 'Time (' + unitLabel + ')', style: { color: '#94a3b8' } },\n");
         html.append("                    labels: { style: { colors: '#94a3b8' } }\n");
         html.append("                },\n");
         html.append("                tooltip: { theme: 'dark' },\n");

@@ -1,60 +1,18 @@
 package net.sixik.ga_profiler;
 
-import java.util.concurrent.atomic.LongAccumulator;
-import java.util.concurrent.atomic.LongAdder;
-
-public class ProfileData {
-    private final String name;
-    private String tooltip;
-
-    private final LongAccumulator min = new LongAccumulator(Math::min, Long.MAX_VALUE);
-    private final LongAccumulator max = new LongAccumulator(Math::max, Long.MIN_VALUE);
-    private final LongAdder total = new LongAdder();
-    private final LongAdder count = new LongAdder();
-
-    public ProfileData(String name) {
-        this.name = name;
+public final class ProfileData {
+    private ProfileData() {
     }
 
-    public void addSample(long durationNs) {
-        min.accumulate(durationNs);
-        max.accumulate(durationNs);
-        total.add(durationNs);
-        count.increment();
-    }
+    public static final class Snapshot {
+        private final String name;
+        private final String tooltip;
+        private final long min;
+        private final long max;
+        private final long total;
+        private final long count;
 
-    public String getName() {
-        return name;
-    }
-
-    public String getTooltip() {
-        return tooltip;
-    }
-
-    public void setTooltip(String tooltip) {
-        this.tooltip = tooltip;
-    }
-
-    public Snapshot takeSnapshot() {
-        return new Snapshot(
-                name,
-                tooltip,
-                min.get() == Long.MAX_VALUE ? 0 : min.get(),
-                max.get() == Long.MIN_VALUE ? 0 : max.get(),
-                total.sum(),
-                count.intValue()
-        );
-    }
-
-    public static class Snapshot {
-        public String name;
-        public String tooltip;
-        public long min;
-        public long max;
-        public long total;
-        public int count;
-
-        public Snapshot(String name, String tooltip, long min, long max, long total, int count) {
+        public Snapshot(String name, String tooltip, long min, long max, long total, long count) {
             this.name = name;
             this.tooltip = tooltip;
             this.min = min;
@@ -83,12 +41,12 @@ public class ProfileData {
             return total;
         }
 
-        public int getCount() {
+        public long getCount() {
             return count;
         }
 
         public double getAvg() {
-            return count == 0 ? 0 : (double) total / count;
+            return count == 0L ? 0.0 : (double) total / count;
         }
     }
 }
